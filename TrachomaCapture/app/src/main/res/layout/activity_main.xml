@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:visibility="visible"
+    tools:context=".MainActivity">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/viewFinder"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" >
+    </androidx.camera.view.PreviewView>
+
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/align_eye"
+        android:layout_centerInParent="true"
+        android:textColor="#FF0000"
+        android:textSize="40sp" />
+
+    <ImageView
+        android:id="@+id/cameralay"
+        android:layout_width="389dp"
+        android:layout_height="217dp"
+        android:layout_centerInParent="true"
+        android:contentDescription="TODO"
+        app:srcCompat="@drawable/oval_target" />
+
+    <ImageView
+        android:id="@+id/camerainlay"
+        android:layout_width="389dp"
+        android:layout_height="217dp"
+        android:layout_centerInParent="true"
+        android:contentDescription="TODO"
+        app:srcCompat="@drawable/circle_target" />
+
+    <Button
+        android:id="@+id/img_capture_btn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignBottom="@id/viewFinder"
+        android:layout_centerHorizontal="true"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        android:text="@string/take_a_photo" />
+
+    <Button
+        android:id="@+id/gallery_btn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignEnd="@id/viewFinder"
+        android:layout_alignBottom="@id/viewFinder"
+        android:layout_gravity="bottom|end"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        android:text="@string/gallery"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/img_capture_btn" />
+
+</RelativeLayout>
+
+    <!--<?xml version="1.0" encoding="utf-8"?>-->
+    <!--<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"-->
+    <!--    xmlns:app="http://schemas.android.com/apk/res-auto"-->
+    <!--    xmlns:tools="http://schemas.android.com/tools"-->
+    <!--    android:layout_width="match_parent"-->
+    <!--    android:layout_height="match_parent"-->
+    <!--    android:visibility="visible"-->
+    <!--    tools:context=".MainActivity">-->
+
+
+    <!--    <androidx.camera.view.PreviewView-->
+    <!--        android:id="@+id/preview"-->
+    <!--        android:layout_width="match_parent"-->
+    <!--        android:layout_height="match_parent">-->
+
+    <!--        <ImageView-->
+    <!--            android:id="@+id/imageView"-->
+    <!--            android:layout_width="389dp"-->
+    <!--            android:layout_height="217dp"-->
+    <!--            android:layout_gravity="center"-->
+    <!--            android:translationZ="90dp"-->
+    <!--            app:srcCompat="@drawable/oval_target" />-->
+    <!--    </androidx.camera.view.PreviewView>-->
+
+
+    <!--    <Button-->
+    <!--        android:id="@+id/img_capture_btn"-->
+    <!--        android:layout_width="wrap_content"-->
+    <!--        android:layout_height="wrap_content"-->
+    <!--        android:layout_margin="16dp"-->
+    <!--        android:text="@string/take_a_photo"-->
+    <!--        app:layout_constraintBottom_toBottomOf="parent"-->
+    <!--        app:layout_constraintEnd_toEndOf="parent"-->
+    <!--        app:layout_constraintStart_toStartOf="parent" />-->
+
+    <!--    &lt;!&ndash;    <Button&ndash;&gt;-->
+    <!--    &lt;!&ndash;        android:id="@+id/switch_btn"&ndash;&gt;-->
+    <!--    &lt;!&ndash;        android:layout_width="wrap_content"&ndash;&gt;-->
+    <!--    &lt;!&ndash;        android:layout_height="wrap_content"&ndash;&gt;-->
+    <!--    &lt;!&ndash;        android:layout_margin="16dp"&ndash;&gt;-->
+    <!--    &lt;!&ndash;        android:text="Switch"&ndash;&gt;-->
+    <!--    &lt;!&ndash;        app:layout_constraintBottom_toBottomOf="parent"&ndash;&gt;-->
+    <!--    &lt;!&ndash;        app:layout_constraintEnd_toStartOf="@id/img_capture_btn"&ndash;&gt;-->
+    <!--    &lt;!&ndash;        app:layout_constraintStart_toStartOf="parent" />&ndash;&gt;-->
+
+    <!--    <Button-->
+    <!--        android:id="@+id/gallery_btn"-->
+    <!--        android:layout_width="wrap_content"-->
+    <!--        android:layout_height="wrap_content"-->
+    <!--        android:layout_margin="16dp"-->
+    <!--        android:text="@string/gallery"-->
+    <!--        app:layout_constraintBottom_toBottomOf="parent"-->
+    <!--        app:layout_constraintEnd_toEndOf="parent"-->
+    <!--        app:layout_constraintStart_toEndOf="@id/img_capture_btn" />-->
+
+    <!--</androidx.constraintlayout.widget.ConstraintLayout>-->
