@@ -6,3 +6,7 @@
 *.rar
 *.tar
 *.zip
+*.json
+*.log
+wandb/
+
