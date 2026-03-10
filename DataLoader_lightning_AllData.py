@@ -16,13 +16,33 @@ np.random.seed(1234)
 
 
 class TrachomaDataModule(pl.LightningDataModule):
-    def __init__(self, img_dir, img_keys_csv, img_col, key_col, transforms_0=None, transforms_1=None, oversample=False, normalize=False, batch_size=32, num_workers=0, oversample_amt=0.2, mapp=None, dataPercent=1.0, split=False):
+    def __init__(
+        self,
+        img_dir_m,
+        img_dir_o,
+        img_keys_csv_m,
+        img_keys_csv_o,
+        img_col,
+        key_col,
+        transforms_0=None,
+        transforms_1=None,
+        oversample=False,
+        normalize=False,
+        batch_size=32,
+        num_workers=0,
+        oversample_amt=0.2,
+        mapp=None,
+        dataPercent=1.0,
+        split=True,
+    ):
         super().__init__()
-        self.img_dir = img_dir
-        self.img_keys_csv = img_keys_csv
+        self.img_dir_m = img_dir_m
+        self.img_keys_csv_m = img_keys_csv_m
+        self.img_dir_o = img_dir_o
+        self.img_keys_csv_o = img_keys_csv_o
         self.img_col = img_col
         self.key_col = key_col
-        self.map = {'No TF': 0, 'TF': 1} if mapp is None else mapp
+        self.map = {"No TF": 0, "TF": 1} if mapp is None else mapp
         self.dataPer = dataPercent
 
         self.transforms_0 = transforms_0
@@ -32,33 +52,54 @@ class TrachomaDataModule(pl.LightningDataModule):
         self.norm = normalize
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.split= split
+        self.split = split
 
         self.get_keys()
 
     def get_keys(self):
-        labels = pd.read_csv(self.img_keys_csv, sep=',')
+        labels = pd.read_csv(self.img_keys_csv_m, sep=",")
 
         # remove ti images
-        labels = labels[~((labels['TI'] == 1) & (labels['TF'] == 0))][['key', 'TF']]
+        labels = labels[~((labels["TI"] == 1) & (labels["TF"] == 0))][["key", "TF"]]
+        labels["dataset"] = "m"
+        labels["img_path"] = labels["key"].apply(
+            lambda x: os.path.join(self.img_dir_m, "image" + str(x)) + ".jpg"
+        )
+        labels_o = pd.read_csv(
+            self.img_keys_csv_o, sep=",", header=0, usecols=[self.img_col, self.key_col]
+        )
 
+        # changes labels from no TF and TF to 0 and 1 respectively
+        labels_o = labels_o.replace({self.key_col: self.map})
+        labels_o.rename(columns={"imagename": "key", "consensus": "TF"}, inplace=True)
+        labels_o["dataset"] = "o"
+        labels_o["img_path"] = labels_o["key"].apply(
+            lambda x: os.path.join(self.img_dir_o, "0" + str(x)) + ".jpg"
+        )
+        labels = pd.concat([labels, labels_o])
 
+        with open("annotated_data/FollicleDetection/clean_image_paths.txt", "r") as f:
+            clean_img_paths = f.read().splitlines()
+        labels = labels[labels["img_path"].isin(clean_img_paths)]
+
+        labels = labels.drop(columns=["img_path"])
         # changes labels from no TF and TF to 0 and 1 respectively
         # labels = labels.replace({self.key_col: self.map})
         labels = np.asarray(labels.values)
 
-        labels = labels[:int(len(labels) * self.dataPer), :]
+        labels = labels[: int(len(labels) * self.dataPer), :]
 
         # shuffle dataset
-        # np.random.shuffle(labels)
+        np.random.seed(1234)
+        np.random.shuffle(labels)
         if self.split:
             # splits No TF and TF for equal distribution in training and testing and validation
             no_tf = labels[labels[:, 1] == 0]
             tf = labels[labels[:, 1] == 1]
 
             # test train
-            train_no_tf_num = int(len(no_tf) * .8)
-            train_tf_num = int(len(tf) * .8)
+            train_no_tf_num = int(len(no_tf) * 0.8)
+            train_tf_num = int(len(tf) * 0.8)
 
             train_no_tf = copy.deepcopy(no_tf[:train_no_tf_num, :])
             train_tf = copy.deepcopy(tf[:train_tf_num, :])
@@ -67,8 +108,8 @@ class TrachomaDataModule(pl.LightningDataModule):
             test_tf = copy.deepcopy(tf[train_tf_num:, :])
 
             # train validate
-            train_no_tf_num = int(len(train_no_tf) * .8)
-            train_tf_num = int(len(train_tf) * .8)
+            train_no_tf_num = int(len(train_no_tf) * 0.8)
+            train_tf_num = int(len(train_tf) * 0.8)
 
             val_no_tf = copy.deepcopy(train_no_tf[train_no_tf_num:, :])
             val_tf = copy.deepcopy(train_tf[train_tf_num:, :])
@@ -113,10 +154,16 @@ class TrachomaDataModule(pl.LightningDataModule):
         # transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
         # split dataset
         # if stage in (None, "fit"):
-        self.trachoma_train = TrachomaDataset(self.img_dir, self.train_keys, transform=self.transforms_1)
-        self.trachoma_val = TrachomaDataset(self.img_dir, self.val_keys, transform=self.transforms_0)
+        self.trachoma_train = TrachomaDataset(
+            self.img_dir_m, self.img_dir_o, self.train_keys, transform=self.transforms_1
+        )
+        self.trachoma_val = TrachomaDataset(
+            self.img_dir_m, self.img_dir_o, self.val_keys, transform=self.transforms_0
+        )
         # if stage == (None, "test"):
-        self.trachoma_test = TrachomaDataset(self.img_dir, self.test_keys, transform=self.transforms_0)
+        self.trachoma_test = TrachomaDataset(
+            self.img_dir_m, self.img_dir_o, self.test_keys, transform=self.transforms_0
+        )
 
         if self.norm:
             mean, std = self.normalize()
@@ -134,7 +181,7 @@ class TrachomaDataModule(pl.LightningDataModule):
         mean = 0.0
         var = 0.0
         for i_batch, batch_target in enumerate(train):
-            batch = batch_target['image']
+            batch = batch_target["image"]
             # Rearrange batch to be the shape of [B, C, W * H]
             batch = batch.view(batch.size(0), batch.size(1), -1)
             # Update total number of images
@@ -151,22 +198,44 @@ class TrachomaDataModule(pl.LightningDataModule):
 
     # return the dataloader for each split
     def train_dataloader(self):
-        trachoma_train = DataLoader(self.trachoma_train, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, pin_memory=True, shuffle=True)
+        trachoma_train = DataLoader(
+            self.trachoma_train,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            pin_memory=True,
+            shuffle=True,
+        )
         return trachoma_train
 
     def val_dataloader(self):
-        trachoma_val = DataLoader(self.trachoma_val, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, pin_memory=True, shuffle=False)
+        trachoma_val = DataLoader(
+            self.trachoma_val,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            pin_memory=True,
+            shuffle=False,
+        )
         return trachoma_val
 
     def test_dataloader(self):
-        trachoma_test = DataLoader(self.trachoma_test, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, pin_memory=True, shuffle=False)
+        trachoma_test = DataLoader(
+            self.trachoma_test,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            pin_memory=True,
+            shuffle=False,
+        )
         return trachoma_test
 
 
 class TrachomaDataset(Dataset):
-    def __init__(self, img_dir, img_keys, transform=None, name=False):
+    def __init__(self, img_dir_m, img_dir_o, img_keys, transform=None, name=False):
         super().__init__()
-        self.img_dir = img_dir
+        self.img_dir_m = img_dir_m
+        self.img_dir_o = img_dir_o
 
         self.transform = transform
 
@@ -174,13 +243,22 @@ class TrachomaDataset(Dataset):
         self.name = name
 
     def __len__(self):
+        # print(self.img_keys)
         return len(self.img_keys)
 
     def __getitem__(self, item):
         if torch.is_tensor(item):
             item = item.tolist()
 
-        img_path = os.path.join(self.img_dir, 'image' + str(self.img_keys[item, 0])) + '.jpg'
+        if self.img_keys[item, 2] == "m":
+            img_path = (
+                os.path.join(self.img_dir_m, "image" + str(self.img_keys[item, 0]))
+                + ".jpg"
+            )
+        else:
+            img_path = (
+                os.path.join(self.img_dir_o, "0" + self.img_keys[item, 0]) + ".jpg"
+            )
         # image = cv.imread(img_path)
         # image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
@@ -191,10 +269,15 @@ class TrachomaDataset(Dataset):
             # print('transformed', self.transform)
             image = self.transform(image)
 
-        sample = {'image': image, 'label': self.img_keys[item, 1]}
+        sample = {"image": image, "label": self.img_keys[item, 1]}
 
         if self.name:
-            sample['name'] = self.img_keys[item, 0]
+            sample["path"] = img_path
+            if self.img_keys[item, 2] == "m":
+                sample["name"] = "image" + str(self.img_keys[item, 0]) + ".jpg"
+
+            else:
+                sample["name"] = "0" + self.img_keys[item, 0] + ".jpg"
             return sample
         else:
             return sample
@@ -208,7 +291,7 @@ class ToTensor(object):
         # numpy image: H x W x C
         # torch image: C x H x W
         # img = sample['image']
-        img = img.transpose((2, 0, 1))/255
+        img = img.transpose((2, 0, 1)) / 255
         return torch.from_numpy(img).float()
 
 
@@ -236,7 +319,7 @@ class CustomCrop(object):
             if self.rgb:
                 src = cv.cvtColor(src, cv.COLOR_YCrCb2BGR)
 
-            crop_img = src[y:y + h, x:x + w]
+            crop_img = src[y : y + h, x : x + w]
         else:
             if self.rgb:
                 src = cv.cvtColor(src, cv.COLOR_YCrCb2BGR)
@@ -248,12 +331,14 @@ class CustomCrop(object):
 class FollicleEnhance(object):
     """Increases the contrast between the rest of the follicle and the eye"""
 
-    def __init__(self, clipLimit=5.0, returnRGB=True, replace=None, sonly=False, addon=False):
+    def __init__(
+        self, clipLimit=5.0, returnRGB=True, replace=None, sonly=False, addon=False
+    ):
         self.clahe = cv.createCLAHE(clipLimit=clipLimit, tileGridSize=(8, 8))
         self.rgb = returnRGB
         self.r = replace
         self.add = addon
-        self.s=sonly
+        self.s = sonly
 
     def __call__(self, img):
         img_hsv = cv.cvtColor(img, cv.COLOR_RGB2HSV)
@@ -277,32 +362,58 @@ class FollicleEnhance(object):
             return img_hsv
 
 
-if __name__ == '__main__':
-    img_dir = 'm'
-    img_keys = 'm/tfti.csv'
+if __name__ == "__main__":
+    img_dir_m = "m"
+    img_keys_m = "m/tfti.csv"
+
+    img_dir_o = "TrachomaData/tarsal plate zip/allTZphotos/allTZphotos"
+    img_keys_o = "2300consensus8-2021.csv"
 
     trans_0 = transforms.Compose(
-        [FollicleEnhance(addon=True), ToTensor(), #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-
-         transforms.Resize(256),
-         transforms.CenterCrop(224)])
+        [
+            FollicleEnhance(addon=True),
+            ToTensor(),  # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+        ]
+    )
     trans_1 = transforms.Compose(
-        [ToTensor(), transforms.Resize(256), transforms.RandomHorizontalFlip(),
-         transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(15)])),
-         transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])), transforms.CenterCrop(224),
-         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+        [
+            ToTensor(),
+            transforms.Resize(256),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(15)])),
+            transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
+            transforms.CenterCrop(224),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
 
-    dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'ans_ground', transforms_0=trans_0,  transforms_1=trans_0,
-                            batch_size=1, num_workers=1, oversample=False, split=False)
+    # dm = TrachomaDataModule(img_dir_m, img_dir_o, img_keys_m, img_keys_o, 'imagename', 'consensus', transforms_0=trans_0,  transforms_1=trans_0,
+    #                         batch_size=1, num_workers=1, oversample=True, oversample_amt=0.5, split=True)
+    dm = TrachomaDataModule(
+        img_dir_m,
+        img_dir_o,
+        img_keys_m,
+        img_keys_o,
+        "imagename",
+        "consensus",
+        transforms_0=trans_0,
+        transforms_1=trans_1,
+        batch_size=1,
+        num_workers=4,
+        oversample=False,
+        oversample_amt=0,
+    )
 
     dm.setup()
-    data = dm.test_dataloader()
+    data = dm.train_dataloader()
     print(len(data))
     for batch in data:
         # if batch['label'] == 1:
-        img = batch['image'].squeeze()
+        img = batch["image"].squeeze()
         # print(img.size())
         img = img.permute(1, 2, 0)
         plt.imshow(img)
-        plt.title(batch['label'])
+        plt.title(batch["label"])
         plt.show()

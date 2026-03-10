@@ -1,9 +1,63 @@
 # Created by https://www.toptal.com/developers/gitignore/api/python,pycharm
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,pycharm
 
+# Model checkpoints and image files
 **/*.ckpt
 **/*.jpg
 **/*.png
+**/*.tif
+**/*.tiff
+
+# Large data directories
+data/
+TrachomaData/
+TANZANIA-SOCIT/
+m/
+Test/
+__MACOSX/
+
+# Raw annotated image data
+annotated_data/vgg_new_data/
+annotated_data/GradableAreaData/
+annotated_data/ImageSegmentationExamples/
+annotated_data/ImageSegmentationExamples.zip
+annotated_data/FollicleDetection/MultipleFollicleImages/
+annotated_data/FollicleDetection/clean_images/
+annotated_data/FollicleDetection/follicle_detection_figs/
+"annotated_data/data from Supervisely task/"
+
+# Trained model weight directories
+trachoma_resnet/
+trachoma_convnet/
+trachoma_efficientnetv2s/
+trachoma_efficientnetv2s.zip
+all_Transforms_oversample5_LeNet5/
+all_Transforms_oversample5_basicCNN/
+
+# Large zip/archive files
+SOCIT_R.zip
+TF.zip
+CC_EA2017.zip
+JUltNym95wcsKwjUwsUd.zip
+LVbeRXpceEADFCPV7f2R.zip
+BlurrDetection.zip
+BlurrDetection.tar.xz
+TrachomaGrader.app_.zip
+Best_Model_TF_Predictions.zip
+BestModelResults_ICAPS_Images.zip
+BestModelResults_CombinedData_Images.zip
+
+# Extracted zip contents
+Best_Model_TF_Predictions/
+BestModelResults_CombinedData_Images/
+BestModelResults_ICAPS_Images/
+
+# W&B experiment logs
+wandb/
+
+# Misc
+damien@132.198.67.13/
+"resolution test many phones/"
 
 ### PyCharm ###
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider

@@ -132,8 +132,8 @@ class TrachomaDataModule(pl.LightningDataModule):
             # Update total number of images
             nimages += batch.size(0)
             # Compute mean and std here
-            mean += batch.mean(2).sum(0)
-            var += batch.var(2).sum(0)
+            mean += torch.mean(batch, 2).sum(0)
+            var += torch.var(batch, 2).sum(0)
 
         mean /= nimages
         var /= nimages
@@ -186,7 +186,9 @@ class TrachomaDataset(Dataset):
         sample = {'image': image, 'label': self.img_keys[item, 1]}
 
         if self.name:
-            sample['name'] = self.img_keys[item, 0]
+            # sample['name'] = self.img_keys[item, 0]
+            sample['name'] = '0' + self.img_keys[item, 0] + '.jpg'
+            sample['path'] = img_path
             return sample
         else:
             return sample
@@ -271,7 +273,7 @@ class FollicleEnhance(object):
 
 if __name__ == '__main__':
     img_dir = 'TrachomaData/tarsal plate zip/allTZphotos/allTZphotos'
-    img_keys = 'TrachomaData/trachomagroundtruthkey.csv'
+    img_keys = '2300consensus8-2021.csv'
 
     trans_0 = transforms.Compose(
         [FollicleEnhance(addon=True), ToTensor(), #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -284,8 +286,8 @@ if __name__ == '__main__':
          transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])), transforms.CenterCrop(224),
          transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
-    dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'ans_ground', transforms_0=trans_0,  transforms_1=trans_0,
-                            batch_size=1, num_workers=1, oversample=True)
+    dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0,  transforms_1=trans_0,
+                            batch_size=1, num_workers=1, oversample=False)
 
     dm.setup()
     test_data = dm.test_dataloader()

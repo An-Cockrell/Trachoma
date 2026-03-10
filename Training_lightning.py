@@ -172,14 +172,14 @@ def run_experiment(run_info, dataloader, model, project='Trachoma', accum_batche
     early_stop_callback = EarlyStopping(monitor="train_loss", min_delta=0.00, patience=5, verbose=True, mode="min")
     checkpoint_callback = ModelCheckpoint(dirpath='Checkpoints/{}'.format(run_info), save_last=True, save_top_k=1, mode='min', monitor='val_loss')
     if torch.cuda.is_available():
-        trainer = pl.Trainer(gpus=2, log_every_n_steps=20, logger=wandb_logger, max_epochs=50,
-                          default_root_dir='Checkpoints', accelerator='ddp', callbacks=[early_stop_callback, checkpoint_callback], accumulate_grad_batches=accum_batches, stochastic_weight_avg=swa)
+        trainer = pl.Trainer(gpus=1, log_every_n_steps=20, logger=wandb_logger, max_epochs=50,
+                          default_root_dir='Checkpoints', accelerator='cuda', callbacks=[early_stop_callback, checkpoint_callback], accumulate_grad_batches=accum_batches)
     else:
         trainer = pl.Trainer(num_processes=1, log_every_n_steps=20, logger=wandb_logger, max_epochs=50, default_root_dir='Checkpoints', callbacks=[early_stop_callback, checkpoint_callback])
     trainer.fit(model, dataloader)
 
     # test
-    trainer.test()
+    # trainer.test()
 
     wandb.finish()
 
@@ -1696,21 +1696,21 @@ if __name__ == '__main__':
     img_keys = '2300consensus8-2021.csv'
     # img_keys = 'TrachomaData/trachomagroundtruthkey.csv'
 
-    trans_0 = transforms.Compose(
-        [FollicleEnhance(), ToTensor(),
-         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-         transforms.Resize(226),
-         transforms.CenterCrop(224)])
-    trans_1 = transforms.Compose(
-        [FollicleEnhance(), ToTensor(),  transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-         transforms.Resize(226),
-         transforms.RandomHorizontalFlip(),
-         # transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
-         transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(10)])), transforms.CenterCrop(224), ])
+    # trans_0 = transforms.Compose(
+    #     [ToTensor(),
+    #      #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    #      transforms.Resize(226),
+    #      transforms.CenterCrop(224)])
+    # trans_1 = transforms.Compose(
+    #     [ToTensor(),  #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    #      transforms.Resize(226),
+    #      transforms.RandomHorizontalFlip(),
+    #      # transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
+    #      transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(10)])), transforms.CenterCrop(224), ])
     # dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0, transforms_1=trans_1,
-    #                         batch_size=5, num_workers=4, oversample=True, oversample_amt=0.5)
+    #                         batch_size=5, num_workers=4, oversample=True, oversample_amt=0.5, normalize=True)
     #
-    # res101 = models.resnet18(pretrained=True)
+    # res101 = models.resnet101(pretrained=True)
     # # vgg16.load_state_dict(torch.load("../input/vgg16bn/vgg16_bn.pth"))
     # print(res101)  # 1000
     #
@@ -1720,6 +1720,16 @@ if __name__ == '__main__':
     # # features.extend([nn.Linear(num_features, 1)])  # Add our layer with 2 outputs
     # res101.fc = nn.Linear(num_features, 1)  # Replace the model classifier
     # print(res101)
+    #
+    # for i in range(10):
+    #     name = 'Pytorch_lightning_consensus_posweight40_pretrained_norm_resnet101_' + str(i)
+    #     dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0, transforms_1=trans_1,
+    #                             batch_size=6, num_workers=4, oversample=False, oversample_amt=0.5, normalize=True)
+    #     classifier12 = TrachomaClassifier(res101, weight=torch.tensor(.4))
+    #     run_experiment(name, dm, classifier12)
+    #     del classifier12
+    #     del dm
+    #     gc.collect()
 
     # for i in [4]:
     #     for j in [5]:
@@ -1747,36 +1757,71 @@ if __name__ == '__main__':
     #         del dm
     #         gc.collect()
 
-    for i in [4]:
-        for j in [5]:
-            if i == 4 and j == 3:
-                continue
-            dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0,
-                                    transforms_1=trans_1,
-                                    batch_size=6, num_workers=4, oversample=True, oversample_amt=0.5)
+    # for i in [4]:
+    #     for j in [5]:
+    #         if i == 4 and j == 3:
+    #             continue
+    #         dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0,
+    #                                 transforms_1=trans_1,
+    #                                 batch_size=6, num_workers=4, oversample=True, oversample_amt=0.5)
+    #
+    #         res101 = models.resnet101(pretrained=True)
+    #         # vgg16.load_state_dict(torch.load("../input/vgg16bn/vgg16_bn.pth"))
+    #         print(res101)  # 1000
+    #
+    #         # Newly created modules have require_grad=True by default
+    #         num_features = res101.fc.in_features
+    #         # features = list(res101.classifier.children())[:-1]  # Remove last layer
+    #         # features.extend([nn.Linear(num_features, 1)])  # Add our layer with 2 outputs
+    #         res101.fc = nn.Linear(num_features, 1)  # Replace the model classifier
+    #         print(res101)
+    #         classifier12 = TrachomaClassifier(res101, weight=torch.tensor([i]))
+    #         #
+    #         run_info = 'Pytorch_lightning_consensus_oversample5_posweight{}_follicleenhance_flip_rotate_norm_pretrained_accum{}batch_resnet101'.format(i, j)
+    #         run_experiment(run_info, dm, classifier12, accum_batches=j)
+    #         del classifier12
+    #         del dm
+    #         gc.collect()
 
-            res101 = models.resnet101(pretrained=True)
-            # vgg16.load_state_dict(torch.load("../input/vgg16bn/vgg16_bn.pth"))
-            print(res101)  # 1000
+    # img_dir = 'TrachomaData/allTZphotos/'
+    img_dir = 'TrachomaData/tarsal plate zip/allTZphotos/allTZphotos'
+    img_keys = '2300consensus8-2021.csv'
+    # img_keys = 'TrachomaData/trachomagroundtruthkey.csv'
 
-            # Newly created modules have require_grad=True by default
-            num_features = res101.fc.in_features
-            # features = list(res101.classifier.children())[:-1]  # Remove last layer
-            # features.extend([nn.Linear(num_features, 1)])  # Add our layer with 2 outputs
-            res101.fc = nn.Linear(num_features, 1)  # Replace the model classifier
-            print(res101)
-            classifier12 = TrachomaClassifier(res101, weight=torch.tensor([i]))
-            #
-            run_info = 'Pytorch_lightning_consensus_oversample5_posweight{}_follicleenhance_flip_rotate_norm_pretrained_accum{}batch_resnet101'.format(i, j)
-            run_experiment(run_info, dm, classifier12, accum_batches=j)
-            del classifier12
-            del dm
-            gc.collect()
+    trans_0 = transforms.Compose(
+        [FollicleEnhance(), ToTensor(),
+         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+         transforms.Resize(226),
+         transforms.CenterCrop(224)])
+    trans_1 = transforms.Compose(
+        [FollicleEnhance(), ToTensor(),  transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+         transforms.Resize(226),
+         transforms.RandomHorizontalFlip(),
+         transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
+         transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(10)])), transforms.CenterCrop(224), ])
+    # dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0, transforms_1=trans_1,
+    #                         batch_size=5, num_workers=4, oversample=True, oversample_amt=0.3, normalize=False)
 
+    res101 = models.resnet101(pretrained=True)
+    # vgg16.load_state_dict(torch.load("../input/vgg16bn/vgg16_bn.pth"))
+    print(res101)  # 1000
 
+    # Newly created modules have require_grad=True by default
+    num_features = res101.fc.in_features
+    # features = list(res101.classifier.children())[:-1]  # Remove last layer
+    # features.extend([nn.Linear(num_features, 1)])  # Add our layer with 2 outputs
+    res101.fc = nn.Linear(num_features, 1)  # Replace the model classifier
+    print(res101)
 
-
-
+    for i in range(10):
+        name = 'Pytorch_lightning_consensus_flip_rotate_perspective_pretrained_norm_resnet101_noPosWeight_' + str(i)
+        dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0, transforms_1=trans_1,
+                                batch_size=6, num_workers=4, oversample=True, oversample_amt=0.5, normalize=False)
+        classifier12 = TrachomaClassifier(res101)
+        run_experiment(name, dm, classifier12)
+        del classifier12
+        del dm
+        gc.collect()
 
 
 

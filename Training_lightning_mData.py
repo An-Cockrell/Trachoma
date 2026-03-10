@@ -11,7 +11,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
 import torchmetrics
 
-from DataLoader_lightning_AllData import TrachomaDataModule, ToTensor, CustomCrop, FollicleEnhance
+from DataLoader_lightning_mData import TrachomaDataModule, ToTensor, CustomCrop, FollicleEnhance
 
 
 class TrachomaClassifier(pl.LightningModule):
@@ -199,8 +199,8 @@ if __name__ == '__main__':
     img_dir_m = 'm'
     img_keys_m = 'm/tfti.csv'
 
-    img_dir_o = 'TrachomaData/tarsal plate zip/allTZphotos/allTZphotos'
-    img_keys_o = '2300consensus8-2021.csv'
+    # img_dir_o = 'TrachomaData/tarsal plate zip/allTZphotos/allTZphotos'
+    # img_keys_o = '2300consensus8-2021.csv'
 
     # trans_0 = transforms.Compose(
     #     [FollicleEnhance(), ToTensor(),
@@ -254,7 +254,7 @@ if __name__ == '__main__':
          transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
          transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(10)])), transforms.CenterCrop(224), ])
 
-    dm = TrachomaDataModule(img_dir_m, img_dir_o, img_keys_m, img_keys_o, 'imagename', 'consensus',
+    dm = TrachomaDataModule(img_dir_m, img_keys_m,
                                                     transforms_0=trans_0, transforms_1=trans_1,
                                                     batch_size=10, num_workers=4, oversample=True, oversample_amt=0.5)
     #
@@ -262,6 +262,7 @@ if __name__ == '__main__':
     #                         batch_size=6, num_workers=4, oversample=True, oversample_amt=0.5, normalize=True)
     #
     res101 = models.resnet101(pretrained=True)
+    # model = models.Inception3
     # # vgg16.load_state_dict(torch.load("../input/vgg16bn/vgg16_bn.pth"))
     # print(res101)  # 1000
     #
@@ -274,7 +275,7 @@ if __name__ == '__main__':
     #
     classifier12 = TrachomaClassifier(res101)
     # #
-    run_info = 'Pytorch_lightning_consensus_oversample5_flip_rotate_perspective_pretrained_resnet101_allData'
+    run_info = 'Pytorch_lightning_consensus_oversample5_flip_rotate_perspective_pretrained_resnet101_mData_5percent_3'
     run_experiment(run_info, dm, classifier12)
 
     del dm

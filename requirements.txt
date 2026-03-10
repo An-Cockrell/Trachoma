@@ -1,0 +1,16 @@
+hyperopt==0.2.7
+imutils==0.5.4
+matplotlib==3.10.3
+numpy==2.2.6
+pandas==2.3.1
+Pillow==11.3.0
+pytorch_lightning==2.5.2
+pytorch_metric_learning==2.8.1
+scikit_learn==1.7.1
+scipy==1.15.3
+scikit-image
+torch==2.7.1
+torch_intermediate_layer_getter==0.1.post1
+torchmetrics==1.7.4
+torchvision==0.22.1
+tqdm==4.67.1

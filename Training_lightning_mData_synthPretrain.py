@@ -12,33 +12,35 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import torchmetrics
 
 from DataLoader_lightning_mData import TrachomaDataModule, ToTensor, CustomCrop, FollicleEnhance
+from DataLoader_lightning_synthData import SynthTrachomaDataModule
 
 
 class TrachomaClassifier(pl.LightningModule):
-    def __init__(self, model, optimizer_metric='val_loss', weight=None, threshold=0.5):
+    def __init__(self, model, optimizer_metric='val_loss', weight=None, lr=1e-3, threshold=0.5):
         super().__init__()
 
         self.model = model
         self.optimizer_metric = optimizer_metric
         # self.loss = nn.CrossEntropyLoss(weight=weight)
         self.loss = nn.BCEWithLogitsLoss(pos_weight=weight)
+        self.lr = lr
 
         # metrics
-        self.train_acc = torchmetrics.Accuracy(threshold=threshold)
-        self.val_acc = torchmetrics.Accuracy(threshold=threshold)
-        self.test_acc = torchmetrics.Accuracy(threshold=threshold)
+        self.train_acc = torchmetrics.Accuracy(threshold=threshold, task='binary')
+        self.val_acc = torchmetrics.Accuracy(threshold=threshold, task='binary')
+        self.test_acc = torchmetrics.Accuracy(threshold=threshold, task='binary')
 
-        self.train_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold)
-        self.val_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold)
-        self.test_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold)
+        self.train_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold, task='binary')
+        self.val_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold, task='binary')
+        self.test_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold, task='binary')
 
-        self.train_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold)
-        self.val_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold)
-        self.test_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold)
+        self.train_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold, task='binary')
+        self.val_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold, task='binary')
+        self.test_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold, task='binary')
 
-        self.train_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
-        self.val_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
-        self.test_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
+        # self.train_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
+        # self.val_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
+        # self.test_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
 
     def forward(self, x):
         classification = self.model(x)
@@ -146,17 +148,16 @@ class TrachomaClassifier(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = optim.Adam(self.parameters(), lr=self.lr)
 
-        if self.optimizer_metric == 'val_loss':
-            mode = 'min'
-        else:
-            mode = 'max'
+        # if self.optimizer_metric == 'train_loss':
+        mode = 'min'
+
 
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
-                'scheduler': ReduceLROnPlateau(optimizer, mode=mode, patience=3, verbose=True),
+                'scheduler': ReduceLROnPlateau(optimizer, mode=mode, patience=3, verbose=True, cooldown=3),
                 'interval': 'epoch',
                 'frequency': 1,
                 'monitor': self.optimizer_metric,
@@ -164,29 +165,37 @@ class TrachomaClassifier(pl.LightningModule):
         }
 
 
-def run_experiment(run_info, dataloader, model, project='Trachoma', accum_batches=1, swa=False):
+def run_experiment(run_info, dataloader_synth, dataloader_m, net, project='Trachoma'):
     print('Running Experiment: ', run_info)
 
     # train
     wandb_logger = WandbLogger(project=project, name=run_info)
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=5, verbose=True, mode="min")
+    early_stop_callback = EarlyStopping(monitor="train_loss", min_delta=0.00, patience=5, verbose=True, mode="min")
     checkpoint_callback = ModelCheckpoint(dirpath='Checkpoints/{}'.format(run_info), save_last=True, save_top_k=1, mode='min', monitor='val_loss')
-    if torch.cuda.is_available():
-        trainer = pl.Trainer(gpus=1, log_every_n_steps=20, logger=wandb_logger, max_epochs=50,
-                          default_root_dir='Checkpoints', accelerator='ddp', callbacks=[early_stop_callback, checkpoint_callback], accumulate_grad_batches=accum_batches, stochastic_weight_avg=swa)
-    else:
-        trainer = pl.Trainer(num_processes=1, log_every_n_steps=20, logger=wandb_logger, max_epochs=50, default_root_dir='Checkpoints', callbacks=[early_stop_callback, checkpoint_callback])
-    trainer.fit(model, dataloader)
+
+    trainer = pl.Trainer(gpus=1, log_every_n_steps=20, logger=wandb_logger, max_epochs=25,
+                      default_root_dir='Checkpoints', accelerator='ddp', callbacks=[checkpoint_callback])
+
+    model = TrachomaClassifier(res101)
+    trainer.fit(model, dataloader_synth)
+
+    path = 'Checkpoints/{}/last.ckpt'.format(run_info)
+
+    model = TrachomaClassifier.load_from_checkpoint(path, model=net, lr=1e-5, strict=True)
+    trainer = pl.Trainer(gpus=1, log_every_n_steps=20, logger=wandb_logger, max_epochs=50,
+                      default_root_dir='Checkpoints', accelerator='ddp', callbacks=[checkpoint_callback], resume_from_checkpoint=path)
+
+    trainer.fit(model, dataloader_m)
 
     # test
-    trainer.test(ckpt_path='best', dataloaders=dataloader)
+    trainer.test(ckpt_path='best', dataloaders=dataloader_m)
 
     wandb.finish()
 
     del wandb_logger
     del trainer
     del model
-    del dataloader
+    del dataloader_m
 
     gc.collect()
 
@@ -198,87 +207,50 @@ if __name__ == '__main__':
 
     img_dir_m = 'm'
     img_keys_m = 'm/tfti.csv'
-
-    # img_dir_o = 'TrachomaData/tarsal plate zip/allTZphotos/allTZphotos'
-    # img_keys_o = '2300consensus8-2021.csv'
-
-    # trans_0 = transforms.Compose(
-    #     [FollicleEnhance(), ToTensor(),
-    #      transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    #      transforms.Resize(226),
-    #      transforms.CenterCrop(224)])
-    # trans_1 = transforms.Compose(
-    #     [FollicleEnhance(), ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    #      transforms.Resize(226),
-    #      transforms.RandomHorizontalFlip(),
-    #      # transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
-    #      transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(10)])), transforms.CenterCrop(224), ])
-    #
-    # dm = TrachomaDataModule(img_dir_m, img_dir_o, img_keys_m, img_keys_o, 'imagename', 'consensus',
-    #                         transforms_0=trans_0, transforms_1=trans_1,
-    #                         batch_size=10, num_workers=4, oversample=True, oversample_amt=0.5)
-    #
-    # # dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0, transforms_1=trans_1,
-    # #                         batch_size=6, num_workers=4, oversample=True, oversample_amt=0.5, normalize=True)
-    # #
-    # res101 = models.resnet101(pretrained=True)
-    # # # vgg16.load_state_dict(torch.load("../input/vgg16bn/vgg16_bn.pth"))
-    # # print(res101)  # 1000
-    # #
-    # # Newly created modules have require_grad=True by default
-    # num_features = res101.fc.in_features
-    # # features = list(res101.classifier.children())[:-1]  # Remove last layer
-    # # features.extend([nn.Linear(num_features, 1)])  # Add our layer with 2 outputs
-    # res101.fc = nn.Linear(num_features, 1)  # Replace the model classifier
-    # print(res101)
-    # #
-    # classifier12 = TrachomaClassifier(res101)
-    # # #
-    # run_info = 'Pytorch_lightning_consensus_oversample5_follicleenhance_flip_rotate_norm_pretrained_resnet101_allData'
-    # run_experiment(run_info, dm, classifier12)
-    #
-    # del dm
-    # del classifier12
-    #
-    # gc.collect()
+    img_dir_tf = 'synthetic_TF_images'
+    img_dir_non_tf = 'synthetic_NonTF_images'
 
     trans_0 = transforms.Compose(
-        [ToTensor(),
-         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        [FollicleEnhance(), ToTensor(),
+         transforms.Normalize(mean=[0.4324, 0.2903, 0.2679], std=[0.1566, 0.1189, 0.1178]),
          transforms.Resize(226),
          transforms.CenterCrop(224)])
     trans_1 = transforms.Compose(
-        [ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        [FollicleEnhance(), ToTensor(),
+         transforms.Normalize(mean=[0.4324, 0.2903, 0.2679], std=[0.1566, 0.1189, 0.1178]),
          transforms.Resize(226),
          transforms.RandomHorizontalFlip(),
          transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
          transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(10)])), transforms.CenterCrop(224), ])
 
-    dm = TrachomaDataModule(img_dir_m, img_keys_m,
+    trans_synth = transforms.Compose(
+        [ToTensor(),
+         transforms.RandomHorizontalFlip(),
+         transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])),
+         transforms.RandomApply(nn.ModuleList([transforms.RandomRotation(10)])) ])
+
+    dm_m = TrachomaDataModule(img_dir_m, img_keys_m,
                                                     transforms_0=trans_0, transforms_1=trans_1,
                                                     batch_size=10, num_workers=4, oversample=False, oversample_amt=0.5)
-    #
-    # dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'consensus', transforms_0=trans_0, transforms_1=trans_1,
-    #                         batch_size=6, num_workers=4, oversample=True, oversample_amt=0.5, normalize=True)
-    #
-    # res101 = models.resnet101(pretrained=True)
-    model = models.Inception3
-    # # vgg16.load_state_dict(torch.load("../input/vgg16bn/vgg16_bn.pth"))
-    # print(res101)  # 1000
-    #
+
+    dm_synth = SynthTrachomaDataModule(img_dir_tf, img_dir_non_tf, transforms=trans_synth, batch_size=10, num_workers=4)
+
+    res101 = models.resnet101(pretrained=False)
+
     # Newly created modules have require_grad=True by default
     num_features = res101.fc.in_features
-    features = list(res101.classifier.children())[:-1]  # Remove last layer
-    features.extend([nn.Linear(num_features, 1)])  # Add our layer with 2 outputs
-    # res101.fc = nn.Linear(num_features, 1)  # Replace the model classifier
+    # features = list(res101.classifier.children())[:-1]  # Remove last layer
+    # features.extend([nn.Linear(num_features, 1)])  # Add our layer with 2 outputs
+    res101.fc = nn.Linear(num_features, 1)  # Replace the model classifier
     print(res101)
     #
-    classifier12 = TrachomaClassifier(res101)
+    # classifier12 = TrachomaClassifier(res101)
     # #
-    run_info = 'Pytorch_lightning_consensus_oversample5_flip_rotate_perspective_pretrained_resnet101_mData'
-    run_experiment(run_info, dm, classifier12)
+    run_info = 'Pytorch_lightning__follicleEnhance_flip_rotate_perspective_pretrained_resnet101_mData_synthPretrain1'
+    run_experiment(run_info, dm_synth, dm_m, res101)
 
-    del dm
-    del classifier12
+    del dm_m
+    del dm_synth
+    # del classifier12
 
     gc.collect()

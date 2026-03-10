@@ -1,5 +1,6 @@
 import os
 import copy
+import glob
 import json
 import numpy as np
 import pandas as pd
@@ -16,11 +17,14 @@ np.random.seed(1234)
 
 
 class TrachomaDataModule(pl.LightningDataModule):
-    def __init__(self, img_dir, img_keys_csv,  transforms_0=None, transforms_1=None, oversample=False, normalize=False, batch_size=32, num_workers=0, oversample_amt=0.2, dataPercent=1.0, split=True):
+    def __init__(self, img_dir, img_keys_csv, img_dir_tf, img_dir_non_tf,  transforms_0=None, transforms_1=None, oversample=False, normalize=False, batch_size=32, num_workers=0, oversample_amt=0.2, synthDataPercent=1.0, split=True):
         super().__init__()
         self.img_dir = img_dir
         self.img_keys_csv = img_keys_csv
-        self.dataPer = dataPercent
+        self.synthDataPer = synthDataPercent
+
+        self.img_dir_tf = img_dir_tf
+        self.img_dir_non_tf = img_dir_non_tf
 
         self.transforms_0 = transforms_0
         self.transforms_1 = transforms_1 if transforms_1 is not None else transforms_0
@@ -29,7 +33,7 @@ class TrachomaDataModule(pl.LightningDataModule):
         self.norm = normalize
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.split= split
+        self.split = split
 
         self.get_keys()
 
@@ -38,13 +42,24 @@ class TrachomaDataModule(pl.LightningDataModule):
 
         # remove ti images
         labels = labels[~((labels['TI'] == 1) & (labels['TF'] == 0))][['key', 'TF']]
+        labels['dataset'] = 'm'
 
+        labels_tf = pd.DataFrame(glob.glob(self.img_dir_tf + '/*.jpg'), columns=['file'])
+        labels_tf['TF'] = 1
+
+        labels_non_tf = pd.DataFrame(glob.glob(self.img_dir_non_tf + '/*.jpg'), columns=['file'])
+        labels_non_tf['TF'] = 0
+
+        labels_synth = pd.concat([labels_tf, labels_non_tf])
+        labels_synth['dataset'] = 's'
+        labels_synth = labels_synth.to_numpy()
+        np.random.shuffle(labels_synth)
+        labels_synth = labels_synth[:int(len(labels_synth) * self.synthDataPer), :]
 
         # changes labels from no TF and TF to 0 and 1 respectively
         # labels = labels.replace({self.key_col: self.map})
         labels = np.asarray(labels.values)
 
-        labels = labels[:int(len(labels) * self.dataPer), :]
 
         # shuffle dataset
         # np.random.shuffle(labels)
@@ -101,7 +116,7 @@ class TrachomaDataModule(pl.LightningDataModule):
             val = None
             test = labels
 
-        self.train_keys = train
+        self.train_keys = np.vstack((train, labels_synth))
         self.val_keys = val
         self.test_keys = test
 
@@ -177,7 +192,10 @@ class TrachomaDataset(Dataset):
         if torch.is_tensor(item):
             item = item.tolist()
 
-        img_path = os.path.join(self.img_dir, 'image' + str(self.img_keys[item, 0])) + '.jpg'
+        if self.img_keys[item, 2] == 'm':
+            img_path = os.path.join(self.img_dir, 'image' + str(self.img_keys[item, 0])) + '.jpg'
+        else:
+            img_path = self.img_keys[item, 0]
         # image = cv.imread(img_path)
         # image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
@@ -278,10 +296,13 @@ if __name__ == '__main__':
     img_dir = 'm'
     img_keys = 'm/tfti.csv'
 
-    trans_0 = transforms.Compose(
-        [FollicleEnhance(addon=True), ToTensor(), #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    img_dir_tf = 'synthetic_TF_images'
+    img_dir_non_tf = 'synthetic_NonTF_images'
 
-         transforms.Resize(256),
+    trans_0 = transforms.Compose(
+        [FollicleEnhance(), ToTensor(),
+         transforms.Normalize(mean=[0.4324, 0.2903, 0.2679], std=[0.1566, 0.1189, 0.1178]),
+         transforms.Resize(226),
          transforms.CenterCrop(224)])
     trans_1 = transforms.Compose(
         [ToTensor(), transforms.Resize(256), transforms.RandomHorizontalFlip(),
@@ -289,11 +310,11 @@ if __name__ == '__main__':
          transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])), transforms.CenterCrop(224),
          transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
-    dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'ans_ground', transforms_0=trans_0,  transforms_1=trans_0,
-                            batch_size=1, num_workers=1, oversample=False, split=False)
+    dm = TrachomaDataModule(img_dir, img_keys, img_dir_tf, img_dir_non_tf, transforms_0=trans_0,  transforms_1=trans_0,
+                            batch_size=1, num_workers=1, oversample=False, split=True)
 
     dm.setup()
-    data = dm.test_dataloader()
+    data = dm.train_dataloader()
     print(len(data))
     for batch in data:
         # if batch['label'] == 1:

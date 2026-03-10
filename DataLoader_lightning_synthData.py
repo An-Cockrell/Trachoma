@@ -1,5 +1,6 @@
 import os
 import copy
+import glob
 import json
 import numpy as np
 import pandas as pd
@@ -11,119 +12,57 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 import pytorch_lightning as pl
 import cv2 as cv
+from sklearn.model_selection import train_test_split
 
 np.random.seed(1234)
 
 
-class TrachomaDataModule(pl.LightningDataModule):
-    def __init__(self, img_dir, img_keys_csv,  transforms_0=None, transforms_1=None, oversample=False, normalize=False, batch_size=32, num_workers=0, oversample_amt=0.2, dataPercent=1.0, split=True):
+class SynthTrachomaDataModule(pl.LightningDataModule):
+    def __init__(self, img_dir_tf, img_dir_non_tf,  transforms=None, batch_size=32, num_workers=0, normalize=False):
         super().__init__()
-        self.img_dir = img_dir
-        self.img_keys_csv = img_keys_csv
-        self.dataPer = dataPercent
-
-        self.transforms_0 = transforms_0
-        self.transforms_1 = transforms_1 if transforms_1 is not None else transforms_0
-        self.oversample = oversample
-        self.oversample_amt = oversample_amt
-        self.norm = normalize
+        self.img_dir_tf = img_dir_tf
+        self.img_dir_non_tf = img_dir_non_tf
+        self.transforms = transforms
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.split= split
+        self.norm = normalize
 
         self.get_keys()
 
     def get_keys(self):
-        labels = pd.read_csv(self.img_keys_csv, sep=',')
+        labels_tf = pd.DataFrame(glob.glob(self.img_dir_tf + '/*.jpg'), columns=['file'])
+        labels_tf['TF'] = True
 
-        # remove ti images
-        labels = labels[~((labels['TI'] == 1) & (labels['TF'] == 0))][['key', 'TF']]
+        labels_non_tf = pd.DataFrame(glob.glob(self.img_dir_non_tf + '/*.jpg'), columns=['file'])
+        labels_non_tf['TF'] = False
 
+        labels = pd.concat([labels_tf, labels_non_tf]).to_numpy()
 
-        # changes labels from no TF and TF to 0 and 1 respectively
-        # labels = labels.replace({self.key_col: self.map})
-        labels = np.asarray(labels.values)
-
-        labels = labels[:int(len(labels) * self.dataPer), :]
 
         # shuffle dataset
-        # np.random.shuffle(labels)
-        if self.split:
-            # splits No TF and TF for equal distribution in training and testing and validation
-            no_tf = labels[labels[:, 1] == 0]
-            tf = labels[labels[:, 1] == 1]
+        np.random.shuffle(labels)
 
-            # test train
-            train_no_tf_num = int(len(no_tf) * .8)
-            train_tf_num = int(len(tf) * .8)
-
-            train_no_tf = copy.deepcopy(no_tf[:train_no_tf_num, :])
-            train_tf = copy.deepcopy(tf[:train_tf_num, :])
-
-            test_no_tf = copy.deepcopy(no_tf[train_no_tf_num:, :])
-            test_tf = copy.deepcopy(tf[train_tf_num:, :])
-
-            # train validate
-            train_no_tf_num = int(len(train_no_tf) * .8)
-            train_tf_num = int(len(train_tf) * .8)
-
-            val_no_tf = copy.deepcopy(train_no_tf[train_no_tf_num:, :])
-            val_tf = copy.deepcopy(train_tf[train_tf_num:, :])
-
-            train_no_tf = copy.deepcopy(train_no_tf[:train_no_tf_num, :])
-            train_tf = copy.deepcopy(train_tf[:train_tf_num, :])
-
-            # over sample TF images to improve the class distribution
-            if self.oversample:
-                # number of new sample to generate  - want 20% tf class
-                num_gen = int(train_no_tf_num * self.oversample_amt) - train_tf_num
-                random_ind = np.random.choice(train_tf_num, num_gen)
-                train_tf = np.vstack((train_tf, train_tf[random_ind]))
-
-            # combind tf and no tf
-            train = np.vstack((train_tf, train_no_tf))
-            val = np.vstack((val_tf, val_no_tf))
-            test = np.vstack((test_tf, test_no_tf))
-
-            # train2 = copy.deepcopy(np.vstack((train_tf, train_no_tf)))
-            # val2 = copy.deepcopy(np.vstack((val_tf, val_no_tf)))
-            # test2 = copy.deepcopy(np.vstack((test_tf, test_no_tf)))
-
-            # np.random.shuffle(train)
-            # np.random.shuffle(val)
-            # np.random.shuffle(test)
-
-            # assert set(map(tuple, train)) == set(map(tuple, train2))
-            # assert set(map(tuple, val)) == set(map(tuple, val2))
-            # assert set(map(tuple, test)) == set(map(tuple, test2))
-        else:
-            train = None
-            val = None
-            test = labels
+        train, val = train_test_split(labels, random_state=0, test_size=.2)
 
         self.train_keys = train
         self.val_keys = val
-        self.test_keys = test
 
     def setup(self, stage=None):
         # transforms
         # transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
         # split dataset
         # if stage in (None, "fit"):
-        self.trachoma_train = TrachomaDataset(self.img_dir, self.train_keys, transform=self.transforms_1)
-        self.trachoma_val = TrachomaDataset(self.img_dir, self.val_keys, transform=self.transforms_0)
-        # if stage == (None, "test"):
-        self.trachoma_test = TrachomaDataset(self.img_dir, self.test_keys, transform=self.transforms_0)
+        self.trachoma_train = TrachomaDataset(self.train_keys, transform=self.transforms)
+        self.trachoma_val = TrachomaDataset(self.val_keys, transform=self.transforms)
 
         if self.norm:
             mean, std = self.normalize()
+            print(mean, std)
             trans = transforms.Normalize(mean=mean, std=std)
-            self.transforms_0 = transforms.Compose([self.transforms_0, trans])
-            self.transforms_1 = transforms.Compose([self.transforms_1, trans])
+            self.transforms_0 = transforms.Compose([self.transforms, trans])
 
-            self.trachoma_train.transform = self.transforms_1
-            self.trachoma_val.transform = self.transforms_0
-            self.trachoma_test.transform = self.transforms_0
+            self.trachoma_train.transform = self.transforms
+            self.trachoma_val.transform = self.transforms
 
     def normalize(self):
         train = self.train_dataloader()
@@ -155,15 +94,10 @@ class TrachomaDataModule(pl.LightningDataModule):
         trachoma_val = DataLoader(self.trachoma_val, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, pin_memory=True, shuffle=False)
         return trachoma_val
 
-    def test_dataloader(self):
-        trachoma_test = DataLoader(self.trachoma_test, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, pin_memory=True, shuffle=False)
-        return trachoma_test
-
 
 class TrachomaDataset(Dataset):
-    def __init__(self, img_dir, img_keys, transform=None, name=False):
+    def __init__(self, img_keys, transform=None, name=False):
         super().__init__()
-        self.img_dir = img_dir
 
         self.transform = transform
 
@@ -177,7 +111,7 @@ class TrachomaDataset(Dataset):
         if torch.is_tensor(item):
             item = item.tolist()
 
-        img_path = os.path.join(self.img_dir, 'image' + str(self.img_keys[item, 0])) + '.jpg'
+        img_path = self.img_keys[item, 0]
         # image = cv.imread(img_path)
         # image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
@@ -275,11 +209,11 @@ class FollicleEnhance(object):
 
 
 if __name__ == '__main__':
-    img_dir = 'm'
-    img_keys = 'm/tfti.csv'
+    img_dir_tf = 'synthetic_TF_images'
+    img_dir_non_tf = 'synthetic_NonTF_images'
 
     trans_0 = transforms.Compose(
-        [FollicleEnhance(addon=True), ToTensor(), #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        [ToTensor(), #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 
          transforms.Resize(256),
          transforms.CenterCrop(224)])
@@ -289,11 +223,10 @@ if __name__ == '__main__':
          transforms.RandomApply(nn.ModuleList([transforms.RandomPerspective(0.3)])), transforms.CenterCrop(224),
          transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
-    dm = TrachomaDataModule(img_dir, img_keys, 'imagename', 'ans_ground', transforms_0=trans_0,  transforms_1=trans_0,
-                            batch_size=1, num_workers=1, oversample=False, split=False)
+    dm = SynthTrachomaDataModule(img_dir_tf, img_dir_non_tf, transforms=trans_0, batch_size=1, num_workers=1, normalize=True)
 
     dm.setup()
-    data = dm.test_dataloader()
+    data = dm.train_dataloader()
     print(len(data))
     for batch in data:
         # if batch['label'] == 1:
