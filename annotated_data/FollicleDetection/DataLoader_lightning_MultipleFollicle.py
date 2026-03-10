@@ -112,7 +112,7 @@ class TrachomaDataModule(pl.LightningDataModule):
         # split dataset
         # if stage in (None, "fit"):
         self.trachoma_train = TrachomaDataset(
-            self.img_dir, self.mask_dir, self.train_imgs, transform=self.transforms_1
+            self.img_dir, self.mask_dir, self.train_imgs, transform=self.transforms_1, augment_image=True
         )
         # Validation uses its own held-out split (not the test set)
         self.trachoma_val = TrachomaDataset(
@@ -200,14 +200,18 @@ class TrachomaDataModule(pl.LightningDataModule):
 
 
 class TrachomaDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, imgs, transform=None):
+    def __init__(self, img_dir, mask_dir, imgs, transform=None, augment_image=False):
         super().__init__()
         self.img_dir = img_dir
         self.mask_dir = mask_dir
-
         self.transform = transform
-
         self.imgs = imgs
+        # Image-only augmentations (color/blur) applied after spatial transforms.
+        # Must NOT go in the stacked transform pipeline as that would corrupt the binary mask.
+        self._image_aug = transforms.Compose([
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2),
+            transforms.RandomApply([transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0))], p=0.5),
+        ]) if augment_image else None
 
     def __len__(self):
         return len(self.imgs)
@@ -230,21 +234,21 @@ class TrachomaDataset(Dataset):
         # print('here')
 
         if self.transform is not None:
-            # print('transformed', self.transform)
             temp = np.dstack((image, mask))
 
             if isinstance(self.transform, list):
                 transformed_images = self.transform[0](temp)
-
                 image = transformed_images[:3, :, :]
                 mask = transformed_images[-1, :, :]
-
                 image = self.transform[1](image)
             else:
                 transformed_images = self.transform(temp)
-
                 image = transformed_images[:3, :, :]
                 mask = transformed_images[-1, :, :]
+
+        # Apply image-only augmentations (color jitter, blur) after spatial transforms
+        if self._image_aug is not None:
+            image = self._image_aug(image)
 
         sample = {"image": image, "label": mask, "name": self.imgs[item]}
 

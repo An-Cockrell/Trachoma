@@ -385,7 +385,7 @@ if __name__ == "__main__":
                         transforms.RandomVerticalFlip(0.5),
                         transforms.RandomHorizontalFlip(0.5),
                         transforms.RandomRotation(90),
-                        transforms.RandomPerspective(0.3),
+                        transforms.RandomPerspective(0.1),
                     ]
                 )
             ),

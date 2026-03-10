@@ -9,6 +9,66 @@ from scipy import spatial
 import math
 
 
+def estimate_follicle_radius_hough(img_gray, cx, cy, ga_radius, patch_factor=3):
+    """
+    Estimate the radius of a single follicle using Hough Circle Transform on a
+    local patch around the annotated center point (cx, cy).
+
+    Since annotations are center points only (no boundary), this extracts the
+    actual circular structure from the image. Falls back to ga_radius if no
+    circle is confidently detected.
+
+    Args:
+        img_gray: Grayscale numpy array (H, W) uint8 of the full image.
+        cx, cy:   Annotated follicle center in image coordinates.
+        ga_radius: GA-width-based fallback radius estimate.
+        patch_factor: Half-patch size = patch_factor * ga_radius.
+
+    Returns:
+        Estimated radius (int).
+    """
+    half = int(patch_factor * ga_radius)
+    h, w = img_gray.shape
+
+    x1, x2 = max(0, cx - half), min(w, cx + half)
+    y1, y2 = max(0, cy - half), min(h, cy + half)
+    patch = img_gray[y1:y2, x1:x2]
+
+    if patch.size == 0 or patch.shape[0] < 6 or patch.shape[1] < 6:
+        return ga_radius
+
+    # Enhance local contrast then smooth before Hough
+    clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+    patch = clahe.apply(patch)
+    patch = cv.GaussianBlur(patch, (3, 3), 0)
+
+    min_r = max(3, ga_radius // 2)
+    max_r = min(ga_radius * 2, half - 2)
+
+    if min_r >= max_r:
+        return ga_radius
+
+    circles = cv.HoughCircles(
+        patch,
+        cv.HOUGH_GRADIENT,
+        dp=1,
+        minDist=patch.shape[0],  # expect at most one follicle per patch
+        param1=50,
+        param2=12,
+        minRadius=min_r,
+        maxRadius=max_r,
+    )
+
+    if circles is not None:
+        circles = np.round(circles[0]).astype(int)
+        # Pick the circle closest to the patch center
+        pcx, pcy = (x2 - x1) // 2, (y2 - y1) // 2
+        best = min(circles, key=lambda c: (c[0] - pcx) ** 2 + (c[1] - pcy) ** 2)
+        return int(best[2])
+
+    return ga_radius
+
+
 
 # dir1 = '/media/dsocia22/T7/Trachoma/annotated_data/data from Supervisely task/MoreImages/UCSF TF positive Chris'
 # dir2 = '/media/dsocia22/T7/Trachoma/annotated_data/data from Supervisely task/MoreImages/UCSF TF positive Lindsay'
@@ -175,7 +235,9 @@ for image_dir, annotation_file in zip(image_dirs, annotation_files):
             continue
 
         num_mask = num_mask + len(def_foll) + len(pos_foll)
-        mask_ind = 0
+
+        # Convert to grayscale once for Hough radius estimation
+        img_gray = cv.cvtColor(np.asarray(img, dtype=np.uint8), cv.COLOR_RGB2GRAY)
 
         foll_mask = Image.new("1", img.size, 0)
         foll_draw = ImageDraw.Draw(foll_mask)
@@ -186,12 +248,14 @@ for image_dir, annotation_file in zip(image_dirs, annotation_files):
             follicles = def_foll
 
         for coord in follicles:
+            # Estimate per-follicle radius from image content; fall back to GA-based radius
+            foll_radius = estimate_follicle_radius_hough(img_gray, coord[0], coord[1], radius)
             foll_draw.ellipse(
                 (
-                    coord[0] - radius,
-                    coord[1] - radius,
-                    coord[0] + radius,
-                    coord[1] + radius,
+                    coord[0] - foll_radius,
+                    coord[1] - foll_radius,
+                    coord[0] + foll_radius,
+                    coord[1] + foll_radius,
                 ),
                 fill=255,
             )
