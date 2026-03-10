@@ -1,5 +1,6 @@
 import gc
 import os
+import random
 import numpy as np
 import wandb
 import torch
@@ -13,9 +14,16 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 from datetime import datetime
-import torchmetrics
+from torchmetrics.classification import BinaryPrecision, BinaryRecall, BinaryF1Score
 
-from DataLoader_lightning_MultipleFollicle import TrachomaDataModule, ToTensor
+from DataLoader_lightning_MultipleFollicle import TrachomaDataModule, ToTensor, SEED
+
+# Global seeds for reproducibility
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
 
 
 class TrachomaGradableArea(pl.LightningModule):
@@ -25,19 +33,18 @@ class TrachomaGradableArea(pl.LightningModule):
         self.model = model
         self.loss = BCEDiceLoss(eps=1.0, activation="sigmoid")
 
-        # metrics
+        # Pixel-wise binary segmentation metrics (threshold=0.5 on sigmoid output)
+        self.train_precision = BinaryPrecision(threshold=0.5)
+        self.val_precision = BinaryPrecision(threshold=0.5)
+        self.test_precision = BinaryPrecision(threshold=0.5)
 
-        # self.train_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold)
-        # self.val_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold)
-        # self.test_precision = torchmetrics.Precision(multiclass=False, num_classes=1, threshold=threshold)
-        #
-        # self.train_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold)
-        # self.val_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold)
-        # self.test_recall = torchmetrics.Recall(multiclass=False, num_classes=1, threshold=threshold)
-        #
-        # self.train_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
-        # self.val_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
-        # self.test_f1 = torchmetrics.F1(multiclass=False, num_classes=1, threshold=threshold)
+        self.train_recall = BinaryRecall(threshold=0.5)
+        self.val_recall = BinaryRecall(threshold=0.5)
+        self.test_recall = BinaryRecall(threshold=0.5)
+
+        self.train_f1 = BinaryF1Score(threshold=0.5)
+        self.val_f1 = BinaryF1Score(threshold=0.5)
+        self.test_f1 = BinaryF1Score(threshold=0.5)
 
     def forward(self, x):
         classification = self.model(x)
@@ -58,9 +65,18 @@ class TrachomaGradableArea(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            sync_dist=True,  # safe for single or multi-GPU
-            batch_size=images.size(0),  # sample-weighted epoch mean
+            sync_dist=True,
+            batch_size=images.size(0),
         )
+
+        preds = torch.sigmoid(outputs).flatten()
+        tgts = targets.long().flatten()
+        self.train_precision(preds, tgts)
+        self.train_recall(preds, tgts)
+        self.train_f1(preds, tgts)
+        self.log("train_precision", self.train_precision, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train_recall", self.train_recall, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train_f1", self.train_f1, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
         return {"loss": loss, "outputs": outputs, "targets": targets}
 
@@ -113,9 +129,18 @@ class TrachomaGradableArea(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            sync_dist=True,  # safe for single or multi-GPU
-            batch_size=images.size(0),  # sample-weighted epoch mean
+            sync_dist=True,
+            batch_size=images.size(0),
         )
+
+        preds = torch.sigmoid(outputs).flatten()
+        tgts = targets.long().flatten()
+        self.val_precision(preds, tgts)
+        self.val_recall(preds, tgts)
+        self.val_f1(preds, tgts)
+        self.log("val_precision", self.val_precision, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val_recall", self.val_recall, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val_f1", self.val_f1, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
         return {"loss": loss, "outputs": outputs, "targets": targets}
 
@@ -158,9 +183,18 @@ class TrachomaGradableArea(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            sync_dist=True,  # safe for single or multi-GPU
-            batch_size=images.size(0),  # sample-weighted epoch mean
+            sync_dist=True,
+            batch_size=images.size(0),
         )
+
+        preds = torch.sigmoid(outputs).flatten()
+        tgts = targets.long().flatten()
+        self.test_precision(preds, tgts)
+        self.test_recall(preds, tgts)
+        self.test_f1(preds, tgts)
+        self.log("test_precision", self.test_precision, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("test_recall", self.test_recall, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("test_f1", self.test_f1, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
         return {"loss": loss, "outputs": outputs, "targets": targets}
 

@@ -1,6 +1,7 @@
 import os, os.path
 import copy
 import json
+import random
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,10 +12,15 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 import pytorch_lightning as pl
 import cv2 as cv
-import random
 from PIL import Image
 
-np.random.seed(1234)
+# Global seeds for reproducibility
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
 
 
 class TrachomaDataModule(pl.LightningDataModule):
@@ -51,7 +57,9 @@ class TrachomaDataModule(pl.LightningDataModule):
 
         self.img_ind = np.arange(len(self.images)).tolist()
 
-        # deterministic random split
+        # --- Three-way split: test (20%) / val (16%) / train (64%) ---
+        # Test set: held out entirely, never used for early stopping or model selection.
+        # Seed 8 preserved for backwards compatibility with previous runs.
         self.test_ind = (
             np.random.RandomState(8)
             .choice(self.img_ind, int(len(self.img_ind) * 0.2), replace=False)
@@ -66,16 +74,21 @@ class TrachomaDataModule(pl.LightningDataModule):
                 for name in os.listdir(alternate_test_data_image_dir)
                 if os.path.isfile(os.path.join(alternate_test_data_image_dir, name))
             ]
-
             self.mask_dir_test = alternate_test_data_mask_dir
             self.img_dir_test = alternate_test_data_image_dir
 
-            self.mask_dir_val = alternate_test_data_mask_dir
-            self.img_dir_val = alternate_test_data_image_dir
+        # Validation set: carved from remaining 80% (20% of remainder = ~16% of total).
+        # Used for early stopping and LR scheduling. Never seen by the test set.
+        remaining_ind = [i for i in self.img_ind if i not in self.test_ind]
+        self.val_ind = (
+            np.random.RandomState(SEED)
+            .choice(remaining_ind, int(len(remaining_ind) * 0.2), replace=False)
+            .tolist()
+        )
+        self.val_imgs = [self.images[i] for i in self.val_ind]
+        print("Number of val images: ", len(self.val_imgs))
 
-        # self.train
-
-        self.train_ind = [i for i in self.img_ind if i not in self.test_ind]
+        self.train_ind = [i for i in remaining_ind if i not in self.val_ind]
         print("Number of train images: ", len(self.train_ind))
 
         self.dataPer = dataPercent
@@ -101,13 +114,13 @@ class TrachomaDataModule(pl.LightningDataModule):
         self.trachoma_train = TrachomaDataset(
             self.img_dir, self.mask_dir, self.train_imgs, transform=self.transforms_1
         )
+        # Validation uses its own held-out split (not the test set)
         self.trachoma_val = TrachomaDataset(
-            self.img_dir_val,
-            self.mask_dir_val,
-            self.test_imgs,
+            self.img_dir,
+            self.mask_dir,
+            self.val_imgs,
             transform=self.transforms_0,
         )
-        # if stage == (None, "test"):
         self.trachoma_test = TrachomaDataset(
             self.img_dir_test,
             self.mask_dir_test,
@@ -205,13 +218,13 @@ class TrachomaDataset(Dataset):
 
         img_path = os.path.join(self.img_dir, self.imgs[item])
         mask_path = os.path.join(self.mask_dir, self.imgs[item])
-        # image = cv.imread(img_path)
-        # image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
-        # print(img_path)
-        # print(mask_path)
         image = io.imread(img_path)
         mask = Image.open(mask_path).convert("1")
         mask = np.array(mask).astype(int)
+
+        # Apply CLAHE to each channel for consistent contrast enhancement at all splits
+        clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        image = np.stack([clahe.apply(image[:, :, c]) for c in range(image.shape[2])], axis=2)
         # mask = io.imread(mask_path)
         # assert image == image2
         # print('here')

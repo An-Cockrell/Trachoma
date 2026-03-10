@@ -13,7 +13,9 @@ import math
 # dir1 = '/media/dsocia22/T7/Trachoma/annotated_data/data from Supervisely task/MoreImages/UCSF TF positive Chris'
 # dir2 = '/media/dsocia22/T7/Trachoma/annotated_data/data from Supervisely task/MoreImages/UCSF TF positive Lindsay'
 
-# determines whether we include the possible follicles in the mask
+# PosFol policy: only definite follicles (DefFol) are used for training masks.
+# Possible follicles (PosFol) are excluded because their ambiguity would introduce
+# noisy labels. If this changes, regenerate all masks before retraining.
 include_pos = False
 
 crop_image = True
