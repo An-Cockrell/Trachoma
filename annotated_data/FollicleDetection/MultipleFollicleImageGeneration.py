@@ -86,7 +86,6 @@ chris_image_dir = "/home/Trachoma/annotated_data/vgg_new_data/chris_images/"
 
 clara_image_dir = "/home/Trachoma/annotated_data/vgg_new_data/clara_images/"
 
-
 manny_ann_json = (
     "/home/Trachoma/annotated_data/vgg_new_data/manny_images_annotations.json"
 )
@@ -108,12 +107,12 @@ grad_area_image_save_dir = (
 
 
 if include_pos:
-    foll_mask_save_dir = "/home/Trachoma/annotated_data/FollicleDetection/MultipleFollicleImages/new_data/Masks/all_follicles/"
+    foll_mask_save_dir = "/home/Trachoma/annotated_data/FollicleDetection/MultipleFollicleImages/new_data/Masks/all_follicles/hough/"
 else:
-    foll_mask_save_dir = "/home/Trachoma/annotated_data/FollicleDetection/MultipleFollicleImages/new_data/Masks/def_follicles/"
+    foll_mask_save_dir = "/home/Trachoma/annotated_data/FollicleDetection/MultipleFollicleImages/new_data/Masks/def_follicles/hough/"
 
 
-foll_image_save_dir = "/home/Trachoma/annotated_data/FollicleDetection/MultipleFollicleImages/new_data/Images/"
+foll_image_save_dir = "/home/Trachoma/annotated_data/FollicleDetection/MultipleFollicleImages/new_data/Images/hough/"
 
 # foll_mask_save_dir = '/home/Trachoma/annotated_data/FollicleDetection/MultipleFollicleImages/image_gen_examples/Masks/'
 

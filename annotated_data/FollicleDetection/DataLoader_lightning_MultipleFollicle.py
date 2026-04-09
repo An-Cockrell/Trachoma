@@ -234,7 +234,9 @@ class TrachomaDataset(Dataset):
         # print('here')
 
         if self.transform is not None:
-            temp = np.dstack((image, mask))
+            # Scale mask from {0,1} to {0,255} so the /255 in ToTensor maps it back to {0,1}.
+            mask_255 = (mask * 255).astype(np.uint8)
+            temp = np.dstack((image, mask_255))
 
             if isinstance(self.transform, list):
                 transformed_images = self.transform[0](temp)

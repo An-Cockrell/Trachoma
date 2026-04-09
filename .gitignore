@@ -26,6 +26,10 @@ annotated_data/FollicleDetection/clean_images/
 annotated_data/FollicleDetection/follicle_detection_figs/
 "annotated_data/data from Supervisely task/"
 
+# Other photo data
+resolution test many phones
+Result_Images
+data from Supervisely task
 # Trained model weight directories
 trachoma_resnet/
 trachoma_convnet/
