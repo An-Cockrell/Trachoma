@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./annotated_data/GradableAreaData"
+    ]
+}

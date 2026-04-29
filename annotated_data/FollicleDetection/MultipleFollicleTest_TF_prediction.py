@@ -1,315 +1,357 @@
 import os
-import copy
-import gc
-import pandas as pd
-import time
-import csv
+import sys
 import cv2
-from skimage import io, measure
-import json
 import numpy as np
-import wandb
+from PIL import Image
+import pandas as pd
 import matplotlib.pyplot as plt
-
-plt.ioff()
-import sklearn.metrics as metrics
+import torch
+import pytorch_lightning as pl
+from torchvision import transforms, models
+from scipy import ndimage
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
+    cohen_kappa_score,
+    confusion_matrix,
     f1_score,
     precision_score,
     recall_score,
 )
-import torch
-import torch.optim as optim
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.distributed as dist
-import torch.backends.cudnn as cudnn
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torchvision import transforms, models
-import pytorch_lightning as pl
-from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-from pytorch_lightning.callbacks import ModelCheckpoint
-from PIL import Image
-from scipy import ndimage
 
-from DataLoader_lightning_MultipleFollicle_no_masks import TrachomaDataModule, ToTensor
-from Training_lightning_MultipleFollicle import (
-    TrachomaGradableArea as SegmentationModel,
-)  # trachoma follicle detection
+plt.ioff()
 
-import cProfile
-import pstats
+from skimage.morphology import remove_small_objects
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../GradableAreaData"))
+from Training_lightning_GradableArea_UNet import GradableAreaUNet
+
+from DataLoader_lightning_MultipleFollicle_all_metadata import (
+    TrachomaMetaDataModule,
+    ToTensor,
+)
+
+from Training_lightning_MultipleFollicle_UNet_Pretrained import FollicleUNet
+# from Training_lightning_MultipleFollicle_UNet_Scratch import FollicleUNet
+# from training_multiple_follicle_sanity_check import TrachomaGradableArea
+
+# ── Config ─────────────────────────────────────────────────────────────────────
+
+METADATA_CSV = "/home/Trachoma/data/all_metadata.csv"
+GA_PATH = "../GradableAreaData/Checkpoints/GradableArea_MobileNetV2_UNet/last.ckpt"
+FOLLICLE_PATH = "Checkpoints/MultipleFollicle_EfficientNetB4_UNet_Pretrained/last.ckpt"
+# FOLLICLE_PATH = "Checkpoints/MultipleFollicle_EfficientNetB4_UNet_Scratch/last.ckpt"
+# FOLLICLE_PATH = "Checkpoints/old_script_SAMFollicleMask/last.ckpt"
+OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Pretrained_TF_eval"
+# OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Scratch_TF_eval"
+# OUT_DIR = "follicle_detection_figs/old_script_SAMFollicleMask_TF_eval"
+
+# GA UNet was trained with ImageNet normalization — must match training exactly
+GA_NORM = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+FOLLICLE_NORM = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # UNet Pretrained (ImageNet)
+# FOLLICLE_NORM = transforms.Normalize(mean=[0.147780, 0.084905, 0.079360], std=[0.255321, 0.155361, 0.147369])  # UNet Scratch (dataset-specific)
+# FOLLICLE_NORM = transforms.Normalize(mean=[0.147780, 0.084905, 0.079360], std=[0.255321, 0.155361, 0.147369])  # old_script_SAMFollicleMask (dataset-specific)
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+MIN_BLOB_SIZE = 20  # pixels — blobs smaller than this are treated as noise
+
+GLARE_V_THRESH = 210  # HSV Value floor for glare detection
+GLARE_S_THRESH = 45  # HSV Saturation ceiling (sclera sits ~80–130, safely above this)
+GLARE_MIN_BLOB = 100  # minimum glare blob area in pixels
+GLARE_MAX_BLOB_PCT = 3.0  # maximum glare blob area as % of image (rejects sclera)
 
 
-# profiler = cProfile.Profile()
-# profiler.enable()
-def param_sweep(results):
-    true_labels = np.array([r[0] for r in results])
-    follicle_counts = np.array([r[1] for r in results])
+def detect_glare_mask(images_raw):
+    """
+    Detects specular glare in a (1, 3, H, W) float [0,1] tensor.
+    Returns a (H, W) boolean numpy array — True where glare was detected.
+    """
+    img_np = (images_raw.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(
+        np.uint8
+    )
+    img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
-    # Sweep thresholds
+    raw = ((hsv[:, :, 2] >= GLARE_V_THRESH) & (hsv[:, :, 1] <= GLARE_S_THRESH)).astype(
+        np.uint8
+    )
+    k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    raw = cv2.morphologyEx(raw, cv2.MORPH_CLOSE, k3)
+    raw = cv2.morphologyEx(raw, cv2.MORPH_OPEN, k3)
+
+    img_area = img_bgr.shape[0] * img_bgr.shape[1]
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(raw)
+    mask = np.zeros_like(raw, dtype=bool)
+    for i in range(1, n):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if GLARE_MIN_BLOB <= area <= (GLARE_MAX_BLOB_PCT / 100.0) * img_area:
+            mask[labels == i] = True
+    return mask
+
+
+def get_follicle_mask(outputs, crop_mask_np):
+    """
+    Threshold the follicle UNet sigmoid output at 0.5 (same as MultipleFollicleTest.py),
+    restrict to the eyelid region, and remove noise blobs below MIN_BLOB_SIZE.
+
+    Returns (outMask, num_follicles).
+    """
+    if crop_mask_np.size == 0:
+        return np.zeros_like(outputs, dtype=bool), 0
+    outMask = (outputs >= 0.5) & crop_mask_np
+    outMask = remove_small_objects(outMask, min_size=MIN_BLOB_SIZE)
+    _, num_follicles = ndimage.label(outMask)
+    return outMask, num_follicles
+
+
+def param_sweep(results, save_path=f"{OUT_DIR}/parameter_sweep.png"):
+    paths           = [r[0] for r in results]
+    true_labels     = np.array([r[1] for r in results])
+    follicle_counts = np.array([r[2] for r in results])
+
     thresholds = range(0, max(follicle_counts) + 1)
     metrics_dict = {
         "threshold": [],
-        "accuracy": [],
-        "f1": [],
+        "kappa":     [],
+        "f1":        [],
+        "accuracy":  [],
         "precision": [],
-        "recall": [],
+        "recall":    [],
     }
 
     for thresh in thresholds:
         preds = (follicle_counts >= thresh).astype(int)
-        acc = accuracy_score(true_labels, preds)
-        f1 = f1_score(true_labels, preds)
-        prec = precision_score(true_labels, preds, zero_division=0)
-        rec = recall_score(true_labels, preds)
-
+        # kappa is undefined when all predictions are the same class
+        try:
+            kappa = cohen_kappa_score(true_labels, preds)
+        except ValueError:
+            kappa = 0.0
         metrics_dict["threshold"].append(thresh)
-        metrics_dict["accuracy"].append(acc)
-        metrics_dict["f1"].append(f1)
-        metrics_dict["precision"].append(prec)
-        metrics_dict["recall"].append(rec)
+        metrics_dict["kappa"].append(kappa)
+        metrics_dict["f1"].append(f1_score(true_labels, preds, zero_division=0))
+        metrics_dict["accuracy"].append(accuracy_score(true_labels, preds))
+        metrics_dict["precision"].append(precision_score(true_labels, preds, zero_division=0))
+        metrics_dict["recall"].append(recall_score(true_labels, preds, zero_division=0))
 
-    # Convert to DataFrame for easy analysis
     df_metrics = pd.DataFrame(metrics_dict)
+    best_idx      = np.argmax(df_metrics["kappa"])
+    best_threshold = int(df_metrics["threshold"][best_idx])
+    best_row       = df_metrics.iloc[best_idx]
 
-    # Print best threshold by F1
-    best_idx = np.argmax(df_metrics["f1"])
-    best_threshold = df_metrics["threshold"][best_idx]
-    print(f"✅ Best threshold: {best_threshold} (F1: {df_metrics['f1'][best_idx]:.2f})")
+    print(f"\nBest threshold by Kappa: {best_threshold}")
+    print(f"  Kappa:     {best_row['kappa']:.3f}")
+    print(f"  F1:        {best_row['f1']:.3f}")
+    print(f"  Accuracy:  {best_row['accuracy']:.3f}")
+    print(f"  Precision: {best_row['precision']:.3f}")
+    print(f"  Recall:    {best_row['recall']:.3f}")
 
-    # Optional: plot F1 vs threshold
-    plt.plot(df_metrics["threshold"], df_metrics["f1"], label="F1 Score")
-    plt.plot(
-        df_metrics["threshold"],
-        df_metrics["accuracy"],
-        label="Accuracy",
-        linestyle="--",
+    # FP / FN lists at best threshold
+    preds_best = (follicle_counts >= best_threshold).astype(int)
+    fp_paths = [paths[i] for i in range(len(results)) if preds_best[i] == 1 and true_labels[i] == 0]
+    fn_paths = [paths[i] for i in range(len(results)) if preds_best[i] == 0 and true_labels[i] == 1]
+
+    print(f"\nFalse Positives ({len(fp_paths)}):")
+    for p in fp_paths:
+        print(f"  {p}")
+    print(f"\nFalse Negatives ({len(fn_paths)}):")
+    for p in fn_paths:
+        print(f"  {p}")
+
+    with open(f"{OUT_DIR}/false_positives.txt", "w") as f:
+        f.write("\n".join(fp_paths))
+    with open(f"{OUT_DIR}/false_negatives.txt", "w") as f:
+        f.write("\n".join(fn_paths))
+
+    with open(f"{OUT_DIR}/model_summary.txt", "w") as f:
+        f.write(f"Best threshold (by Kappa): {best_threshold}\n")
+        f.write(f"  Kappa:     {best_row['kappa']:.4f}\n")
+        f.write(f"  F1:        {best_row['f1']:.4f}\n")
+        f.write(f"  Accuracy:  {best_row['accuracy']:.4f}\n")
+        f.write(f"  Precision: {best_row['precision']:.4f}\n")
+        f.write(f"  Recall:    {best_row['recall']:.4f}\n")
+        f.write(f"\nFalse Positives: {len(fp_paths)}\n")
+        f.write(f"False Negatives: {len(fn_paths)}\n")
+        f.write(f"Total test images: {len(results)}\n")
+
+    # Confusion matrix at best threshold
+    cm = confusion_matrix(true_labels, preds_best)
+    fig_cm, ax_cm = plt.subplots()
+    ConfusionMatrixDisplay(cm, display_labels=["No TF", "TF"]).plot(ax=ax_cm)
+    ax_cm.set_title(f"Threshold = {best_threshold}  (κ = {best_row['kappa']:.3f})")
+    fig_cm.savefig(
+        save_path.replace(".png", f"_cm_thresh{best_threshold}.png"),
+        bbox_inches="tight",
     )
-    plt.xlabel("Threshold (# follicles)")
-    plt.ylabel("Score")
-    plt.title("TF Detection Threshold Sweep")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig("follicle_detection_figs/new_model_parameter_sweep")
-    plt.close()
-    # plt.show()
-    return best_threshold
+    plt.close(fig_cm)
+
+    # Sweep plot
+    fig, ax = plt.subplots()
+    ax.plot(df_metrics["threshold"], df_metrics["kappa"],    label="Kappa", linewidth=2)
+    ax.plot(df_metrics["threshold"], df_metrics["f1"],       label="F1",        linestyle="--")
+    ax.plot(df_metrics["threshold"], df_metrics["accuracy"], label="Accuracy",   linestyle=":")
+    ax.plot(df_metrics["threshold"], df_metrics["precision"],label="Precision",  linestyle="-.")
+    ax.plot(df_metrics["threshold"], df_metrics["recall"],   label="Recall",     linestyle=(0, (3, 1, 1, 1)))
+    ax.axvline(best_threshold, color="red", linestyle="--", alpha=0.6,
+               label=f"Best thresh={best_threshold}")
+    ax.set_xlabel("Threshold (# follicles)")
+    ax.set_ylabel("Score")
+    ax.set_title("TF Detection Threshold Sweep")
+    ax.legend()
+    ax.grid(True)
+    fig.savefig(save_path, bbox_inches="tight")
+    plt.close(fig)
+
+    return best_threshold, df_metrics
 
 
-# Gradable area model (ga) Setup
-ga_path = "../Checkpoints/GradableAreaTest_new_data/last.ckpt"
+# ── Data ───────────────────────────────────────────────────────────────────────
 
-ga_fcn = models.segmentation.fcn_resnet50(pretrained=False, num_classes=1)
+trans_eval = transforms.Compose([ToTensor(), transforms.Resize((512, 512))])  # UNet
+# trans_eval = transforms.Compose([ToTensor(), transforms.Resize(540), transforms.CenterCrop(520)])  # old_script_SAMFollicleMask
 
-ga_model = SegmentationModel.load_from_checkpoint(ga_path, model=ga_fcn, strict=True)
-
-
-# Follicle Detection Setup
-img_dir_o = "/home/Trachoma/TrachomaData/tarsal plate zip/allTZphotos/allTZphotos"
-img_keys_o = "/home/Trachoma/2300consensus8-2021.csv"
-img_dir_m = "/home/Trachoma/m"
-img_keys_m = "/home/Trachoma/m/tfti.csv"
-
-# follicle detection best model
-# path = "/home/Trachoma/annotated_data/FollicleDetection/Checkpoints/Segmentation_Test_MultipleFollicle_520/last.ckpt"
-
-path = "/home/Trachoma/annotated_data/FollicleDetection/Checkpoints/Old_script_new_data/last.ckpt"
-
-trans_0 = transforms.Compose(
-    [ToTensor(), transforms.Resize(540), transforms.CenterCrop(520)]
-)
-trans_1 = transforms.Compose(
-    [
-        ToTensor(),
-        transforms.Resize(540),
-        transforms.RandomApply(
-            nn.ModuleList(
-                [
-                    transforms.RandomVerticalFlip(0.5),
-                    transforms.RandomHorizontalFlip(0.5),
-                    transforms.RandomRotation(90),
-                    transforms.RandomPerspective(0.3),
-                ]
-            )
-        ),
-        transforms.CenterCrop(520),
-    ]
-)
-
-# setup dataloader to get the black box data, but processed with the follicle detection transforms
-dm = TrachomaDataModule(
-    img_dir_m,
-    img_dir_o,
-    img_keys_m,
-    img_keys_o,
-    "imagename",
-    "consensus",
-    transforms_0=trans_0,
-    transforms_1=trans_1,
+dm = TrachomaMetaDataModule(
+    metadata_csv=METADATA_CSV,
+    transforms_0=trans_eval,
     batch_size=1,
     num_workers=4,
-    oversample=False,
-    oversample_amt=1,
-    normalize=True,
 )
 
-
-#
-fcn = models.segmentation.fcn_resnet50(pretrained=False, num_classes=1)
-
-
-print("starting setup")
 dm.setup()
-print("saving image paths")
-# save the image names from training set
-# train_image_paths = []
-# for entry in dm.train_keys:
-#     if entry[2] == "m":
-#         img_path = os.path.join(dm.img_dir_m, "image" + str(entry[0])) + ".jpg"
-#     else:
-#         img_path = os.path.join(dm.img_dir_o, "0" + entry[0]) + ".jpg"
-#     train_image_paths.append(img_path)
-
-# # Save to file for offline normalization
-# with open("clean_images/train_image_paths.txt", "w") as f:
-#     for p in train_image_paths:
-#         f.write(p + "\n")
-
-# # then do the same for test images
-# test_image_paths = []
-# for entry in dm.test_keys:
-#     if entry[2] == "m":
-#         img_path = os.path.join(dm.img_dir_m, "image" + str(entry[0])) + ".jpg"
-#     else:
-#         img_path = os.path.join(dm.img_dir_o, "0" + entry[0]) + ".jpg"
-#     test_image_paths.append(img_path)
-
-# # Save to file for offline normalization
-# with open("clean_images/test_image_paths.txt", "w") as f:
-#     for p in test_image_paths:
-#         f.write(p + "\n")
-
-# print(test_image_paths[:5])
-# print(train_image_paths[:5])
-
 test_data = dm.test_dataloader()
-train_data = dm.train_dataloader()
-print("test", len(test_data))
-print("training", len(train_data))
+print(f"Test batches: {len(test_data)}")
 
-# load the follicle detection model
-model = SegmentationModel.load_from_checkpoint(path, model=fcn, strict=True)
+# ── Models ─────────────────────────────────────────────────────────────────────
 
-if torch.cuda.is_available():
-    accelerator = "gpu"
-    num_devices = torch.cuda.device_count()  # use all available GPUs
-else:
-    accelerator = "cpu"
-    num_devices = 1  # single CPU
-
-trainer = pl.Trainer(
-    accelerator=accelerator,  # or "gpu" if CUDA available
-    devices=num_devices,
-    log_every_n_steps=2,
-    max_epochs=1,
-    default_root_dir="Training_Checkpoints",
+ga_model = GradableAreaUNet.load_from_checkpoint(
+    GA_PATH, encoder="mobilenet_v2", lr=1e-3
 )
+ga_model.eval()
 
+model = FollicleUNet.load_from_checkpoint(FOLLICLE_PATH)  # UNet Pretrained or Scratch
+# fcn = models.segmentation.fcn_resnet50(pretrained=False, num_classes=1)
+# model = TrachomaGradableArea.load_from_checkpoint(FOLLICLE_PATH, model=fcn)
 model.eval()
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+ga_model = ga_model.to(device)
+model = model.to(device)
 
-# fig1, ax1 = plt.subplots(1, 3)
-os.makedirs("follicle_detection_figs/", exist_ok=True)
+# ── Inference ──────────────────────────────────────────────────────────────────
 
+os.makedirs(OUT_DIR, exist_ok=True)
 
-output_list = []
-
-# we need to dynamically set the threshold to maximize the number of correct TF predictions
-
+# (path, true_label, num_follicles) — collected for all test images
 results = []
 
-for i, batch in enumerate(train_data):
+with torch.no_grad():
+    for batch in test_data:
+        images_raw = batch["image"].to(device)  # (1, 3, 520, 520) in [0, 1]
+        true_label = batch["label"].item()
+        img_path = batch["path"][0]
 
-    images, labels = batch["image"], batch["label"]
-    true_label = labels.item()
+        # GA model: ImageNet-normalized, 520×520
+        images_ga = GA_NORM(images_raw)
+        crop_logits = ga_model(images_ga)
+        crop_mask = torch.sigmoid(crop_logits) > 0.5  # (1, 1, 520, 520)
 
-    # print(true_label)
-    # print(np.shape(images), np.shape(labels))
-    # continue
-    device = next(model.parameters()).device
-    images = images.to(device)
+        # Follicle UNet: feed eyelid-masked image, matching training distribution
+        images_follicle = FOLLICLE_NORM(images_raw * crop_mask)
 
-    crop_mask = ga_model(images)["out"]  # .squeeze().detach().cpu().numpy()
-    crop_mask = crop_mask >= 0
+        outputs = torch.sigmoid(model(images_follicle)).squeeze().detach().cpu().numpy()  # FollicleUNet
+        # outputs = torch.sigmoid(model(images_follicle)["out"]).squeeze().detach().cpu().numpy()  # TrachomaGradableArea
+        crop_mask_np = crop_mask.squeeze().cpu().numpy().astype(bool)
+        outputs[detect_glare_mask(images_raw)] = 0
 
-    cropped_image = images * crop_mask
-    cropped_im = cropped_image.squeeze().permute(1, 2, 0).cpu().numpy()
+        outMask, num_follicles = get_follicle_mask(outputs, crop_mask_np)
 
-    outputs = model(cropped_image)["out"].squeeze().detach().cpu().numpy()
-    im = images.squeeze().permute(1, 2, 0).cpu().numpy()
-
-    outputs_recropped = outputs * crop_mask.squeeze().cpu().numpy()
-
-    output_list.append(outputs)
-
-    mean = np.mean(outputs)
-    std = np.std(outputs)
-    min_follicle_value = mean + 1 * std
-    # outMask = outputs >= min_follicle_value
-    outMask = outputs > 0
-    # collect (num_follicle, label) pairs for threshold sweep
-    labeled_array, num_follicles = ndimage.label(outMask)
-    results.append((true_label, num_follicles))
-
-    fig, ax = plt.subplots(1, 4)
-
-    ax[0].imshow(im)
-    ax[0].axis("off")
-    ax[0].set_title("image")
-    ax[1].imshow(cropped_im)
-    ax[1].axis("off")
-    ax[1].set_title("cropped_image")
-    ax[2].imshow(outputs)
-    ax[2].axis("off")
-    ax[2].set_title("output")
-    ax[3].imshow(outMask)
-    ax[3].axis("off")
-    ax[3].set_title("outmask")
-    fig.suptitle(f"Num Pred Follicles: {num_follicles}")
-    # os.makedirs(
-    #     "follicle_detection_figs/new_model/positive_case_pred_results/", exist_ok=True
-    # )
-    # os.makedirs(
-    #     "follicle_detection_figs/new_model/negative_case_pred_results/", exist_ok=True
-    # )
-    # if true_label == 0:
-    #     plt.savefig(
-    #         f"follicle_detection_figs/new_model/negative_case_pred_results/sample_{i}"
-    #     )
-    # else:
-    #     plt.savefig(
-    #         f"follicle_detection_figs/new_model/positive_case_pred_results/sample_{i}"
-    #     )
-
-    plt.show()
-    plt.imshow(outputs_recropped)
-    plt.show()
-    plt.close()
-    # print(num_follicles)
-    if i >= 50:
-        break
-    # name = batch['name'][0].split('.')[0]
-
-    # outpath = f'{out_dir}/{name}_outMask.npy'
-    # np.save(outpath, outMask)
-
-    # targetpath = f'{target_mask_test_dir}/{name}.npy'
-    # np.save(targetpath, targets)
-
-param_sweep(results)
+        results.append((img_path, true_label, num_follicles, outMask))
 
 
+# ── Evaluate ───────────────────────────────────────────────────────────────────
+
+print(f"\n{'='*50}")
+print(f"Evaluated {len(results)} test images")
+best_thresh, sweep_df = param_sweep(results)
+
+# ── Save FP / FN outmasks ──────────────────────────────────────────────────────
+
+os.makedirs(f"{OUT_DIR}/fp_masks", exist_ok=True)
+os.makedirs(f"{OUT_DIR}/fn_masks", exist_ok=True)
+
+for img_path, true_label, num_follicles, outMask in results:
+    pred = int(num_follicles >= best_thresh)
+    stem = os.path.splitext(os.path.basename(img_path))[0]
+    if pred == 1 and true_label == 0:
+        Image.fromarray(outMask.astype(np.uint8) * 255).save(f"{OUT_DIR}/fp_masks/{stem}.png")
+    elif pred == 0 and true_label == 1:
+        Image.fromarray(outMask.astype(np.uint8) * 255).save(f"{OUT_DIR}/fn_masks/{stem}.png")
+
+# ── Visualise 25 positive + 25 negative random samples ────────────────────────
+
+rng = np.random.default_rng(seed=42)
+pos_indices = [i for i, (_, lbl, _, _) in enumerate(results) if lbl == 1]
+neg_indices = [i for i, (_, lbl, _, _) in enumerate(results) if lbl == 0]
+
+viz_pos = rng.choice(
+    pos_indices, size=min(25, len(pos_indices)), replace=False
+).tolist()
+viz_neg = rng.choice(
+    neg_indices, size=min(25, len(neg_indices)), replace=False
+).tolist()
+viz_indices = set(viz_pos + viz_neg)
+
+viz_paths = [results[i][0] for i in viz_indices]  # path is still index 0
+
+from torch.utils.data import DataLoader as _DL
+from DataLoader_lightning_MultipleFollicle_all_metadata import TrachomaMetaDataset
+
+viz_df = dm.test_df[dm.test_df["image_path"].isin(viz_paths)].reset_index(drop=True)
+viz_dataset = TrachomaMetaDataset(viz_df, transform=trans_eval)
+viz_loader = _DL(viz_dataset, batch_size=1, num_workers=0, shuffle=False)
+
+os.makedirs(f"{OUT_DIR}/positive", exist_ok=True)
+os.makedirs(f"{OUT_DIR}/negative", exist_ok=True)
+
+with torch.no_grad():
+    for batch in viz_loader:
+        images_raw = batch["image"].to(device)
+        true_label = batch["label"].item()
+        img_path = batch["path"][0]
+
+        images_ga = GA_NORM(images_raw)
+        crop_mask = torch.sigmoid(ga_model(images_ga)) > 0.5  # (1, 1, 520, 520)
+
+        images_follicle = FOLLICLE_NORM(images_raw * crop_mask)
+
+        outputs = torch.sigmoid(model(images_follicle)).squeeze().detach().cpu().numpy()  # FollicleUNet
+        # outputs = torch.sigmoid(model(images_follicle)["out"]).squeeze().detach().cpu().numpy()  # TrachomaGradableArea
+        crop_mask_np = crop_mask.squeeze().cpu().numpy().astype(bool)
+        outputs[detect_glare_mask(images_raw)] = 0
+        outMask, num_follicles = get_follicle_mask(outputs, crop_mask_np)
+        outputs_masked = outputs * crop_mask_np
+
+        im = images_raw.squeeze().permute(1, 2, 0).cpu().numpy()
+        cropped_im = (images_raw * crop_mask).squeeze().permute(1, 2, 0).cpu().numpy()
+        pred_tf = int(num_follicles >= best_thresh)
+        stem = os.path.splitext(os.path.basename(img_path))[0]
+        subdir = "positive" if true_label == 1 else "negative"
+
+        fig, ax = plt.subplots(1, 4, figsize=(16, 4))
+        ax[0].imshow(im)
+        ax[0].axis("off")
+        ax[0].set_title("Input")
+        ax[1].imshow(cropped_im)
+        ax[1].axis("off")
+        ax[1].set_title("GA Crop")
+        ax[2].imshow(outputs_masked)
+        ax[2].axis("off")
+        ax[2].set_title("Follicle Output")
+        ax[3].imshow(outMask)
+        ax[3].axis("off")
+        ax[3].set_title("Follicle Mask")
+        fig.suptitle(
+            f"{stem} | Follicles: {num_follicles} | Pred TF: {pred_tf} | True TF: {true_label}"
+        )
+        fig.savefig(f"{OUT_DIR}/{subdir}/{stem}.png", bbox_inches="tight", dpi=100)
+        plt.close(fig)

@@ -291,29 +291,39 @@ def run_experiment(
 
 
 if __name__ == "__main__":
-    img_dir = "./MultipleFollicleImages/Images"
-    mask_dir = "./MultipleFollicleImages/Masks"
+    img_dir = "./MultipleFollicleImages/SAMFollicleMasks/Images"
+    mask_dir = "./MultipleFollicleImages/SAMFollicleMasks/Masks"
 
-    trans_0 = transforms.Compose(
-        [ToTensor(), transforms.Resize(540), transforms.CenterCrop(520)]
+    norm = transforms.Normalize(
+        mean=[0.147780, 0.084905, 0.079360], std=[0.255321, 0.155361, 0.147369]
     )
-    trans_1 = transforms.Compose(
-        [
-            ToTensor(),
-            transforms.Resize(540),
-            transforms.RandomApply(
-                nn.ModuleList(
-                    [
-                        transforms.RandomVerticalFlip(0.5),
-                        transforms.RandomHorizontalFlip(0.5),
-                        transforms.RandomRotation(90),
-                        transforms.RandomPerspective(0.3),
-                    ]
-                )
-            ),
-            transforms.CenterCrop(520),
-        ]
-    )
+
+    trans_0 = [
+        transforms.Compose(
+            [ToTensor(), transforms.Resize(540), transforms.CenterCrop(520)]
+        ),
+        norm,
+    ]
+    trans_1 = [
+        transforms.Compose(
+            [
+                ToTensor(),
+                transforms.Resize(540),
+                transforms.RandomApply(
+                    nn.ModuleList(
+                        [
+                            transforms.RandomVerticalFlip(0.5),
+                            transforms.RandomHorizontalFlip(0.5),
+                            transforms.RandomRotation(90),
+                            transforms.RandomPerspective(0.3),
+                        ]
+                    )
+                ),
+                transforms.CenterCrop(520),
+            ]
+        ),
+        norm,
+    ]
 
     dm = TrachomaDataModule(
         img_dir,
@@ -323,12 +333,12 @@ if __name__ == "__main__":
         batch_size=6,
         num_workers=1,
         oversample=True,
-        oversample_amt=20,
-        normalize=True,
+        oversample_amt=5,
+        normalize=False,
     )
 
     fcn = models.segmentation.fcn_resnet50(pretrained=False, num_classes=1)
     print(fcn)
     segModel = TrachomaGradableArea(fcn)
-    run_info = "Old_script_new_data"
+    run_info = "old_script_SAMFollicleMask"
     run_experiment(run_info, dm, segModel)

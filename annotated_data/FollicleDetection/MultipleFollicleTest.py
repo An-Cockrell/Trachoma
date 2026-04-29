@@ -27,60 +27,40 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from torchmetrics import JaccardIndex
 from torchmetrics.segmentation import DiceScore
 
-# from DataLoader_lightning_MultipleFollicle import TrachomaDataModule, ToTensor
-# from Training_lightning_MultipleFollicle import TrachomaGradableArea
-from dataloader_multiple_follicle_sanity_check import TrachomaDataModule, ToTensor
-from training_multiple_follicle_sanity_check import TrachomaGradableArea
+from Training_lightning_MultipleFollicle_UNet_Pretrained import (
+    FollicleUNet,
+    TrachomaDataModule,
+    ToTensor,
+)
 
 # np.random.seed(100)
 
-img_dir = "./MultipleFollicleImages/old_data/Images"
-mask_dir = "./MultipleFollicleImages/old_data/Masks"
-out_dir = "./MultipleFollicleImages/OutMasks"
-target_mask_test_dir = "./MultipleFollicleImages/Masks/Test_Targets/"
+img_dir = "./MultipleFollicleImages/SAMFollicleMasks/Images"
+mask_dir = "./MultipleFollicleImages/SAMFollicleMasks/Masks"
+RUN_NAME = "MultipleFollicle_EfficientNetB4_UNet_Pretrained"
+out_dir = f"./MultipleFollicleImages/OutMasks/{RUN_NAME}"
+target_mask_test_dir = f"./MultipleFollicleImages/Masks/Test_Targets/{RUN_NAME}/"
 os.makedirs(out_dir, exist_ok=True)
 os.makedirs(target_mask_test_dir, exist_ok=True)
 
 # path = "/home/Trachoma/annotated_data/FollicleDetection/Checkpoints/Segmentation_Test_MultipleFollicle_520/last.ckpt"
 
-path = "/home/Trachoma/annotated_data/FollicleDetection/Checkpoints/Old_script_new_data/last.ckpt"
+path = "Checkpoints/MultipleFollicle_EfficientNetB4_UNet_Pretrained/last.ckpt"
 
-trans_0 = transforms.Compose(
-    [ToTensor(), transforms.Resize(540), transforms.CenterCrop(520)]
-)
-trans_1 = transforms.Compose(
-    [
-        ToTensor(),
-        transforms.Resize(540),
-        transforms.RandomApply(
-            nn.ModuleList(
-                [
-                    transforms.RandomVerticalFlip(0.5),
-                    transforms.RandomHorizontalFlip(0.5),
-                    transforms.RandomRotation(90),
-                    transforms.RandomPerspective(0.3),
-                ]
-            )
-        ),
-        transforms.CenterCrop(520),
-    ]
-)
+FOLLICLE_NORM = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+trans_eval = [
+    transforms.Compose([ToTensor(), transforms.Resize((512, 512))]),
+    FOLLICLE_NORM,
+]
 
 dm = TrachomaDataModule(
     img_dir,
     mask_dir,
-    transforms_0=trans_0,
-    transforms_1=trans_1,
+    trans_train=trans_eval,
+    trans_eval=trans_eval,
     batch_size=1,
     num_workers=1,
-    oversample=False,
-    oversample_amt=20,
-    normalize=True,
 )
-
-fcn = models.segmentation.fcn_resnet50(pretrained=False, num_classes=1)
-# print(fcn)
-# segModel = TrachomaGradableArea(fcn)
 
 dm.setup()
 test_data = dm.test_dataloader()
@@ -88,7 +68,7 @@ print("test", len(test_data))
 print("training", len(dm.train_dataloader()))
 
 
-model = TrachomaGradableArea.load_from_checkpoint(path, model=fcn, strict=True)
+model = FollicleUNet.load_from_checkpoint(path)
 
 #
 
@@ -135,9 +115,11 @@ for i, batch in enumerate(test_data):
     device = next(model.parameters()).device
     images = images.to(device)
 
-    outputs = model(images)["out"].squeeze().detach().cpu().numpy()
-    im = images.squeeze().permute(1, 2, 0).cpu().numpy()
-    outMask = outputs >= 0
+    outputs = torch.sigmoid(model(images)).squeeze().detach().cpu().numpy()
+    _mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    _std  = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    im = (images.squeeze().cpu() * _std + _mean).clamp(0, 1).permute(1, 2, 0).numpy()
+    outMask = outputs >= 0.5
 
     name = batch["name"][0].split(".")[0]
 
@@ -177,11 +159,10 @@ for i, batch in enumerate(test_data):
 
     
 
-    save_dir = 'follicle_detection_figs/retrained_model_outputs/'
-
+    save_dir = f'follicle_detection_figs/{RUN_NAME}/'
     os.makedirs(save_dir, exist_ok=True)
-    # plt.savefig(f'{save_dir}image_{i}')
-    plt.show()
+    plt.savefig(f'{save_dir}image_{i}.png', bbox_inches='tight')
+    plt.close(fig)
     # if i == 0:
     #     ax1[0].imshow(im)
     #     ax1[0].axis("off")

@@ -14,6 +14,25 @@ import pytorch_lightning as pl
 import cv2 as cv
 from PIL import Image
 
+GA_NORM = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+_GA_PREPROCESS = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Resize((512, 512)),
+    GA_NORM,
+])
+
+
+def _compute_ga_mask(ga_model, img_path):
+    """Run ga_model on the image at img_path; return binary mask (uint8 0/255) at original resolution."""
+    img = Image.open(img_path).convert("RGB")
+    W, H = img.size
+    device = next(ga_model.parameters()).device
+    img_tensor = _GA_PREPROCESS(img).unsqueeze(0).to(device)
+    with torch.no_grad():
+        logits = ga_model(img_tensor)
+    mask_512 = (torch.sigmoid(logits) > 0.5).squeeze().cpu().numpy().astype(np.uint8) * 255
+    return cv.resize(mask_512, (W, H), interpolation=cv.INTER_NEAREST)
+
 # Global seeds for reproducibility
 SEED = 42
 random.seed(SEED)
@@ -38,10 +57,12 @@ class TrachomaDataModule(pl.LightningDataModule):
         dataPercent=1.0,
         alternate_test_data_image_dir=None,
         alternate_test_data_mask_dir=None,
+        ga_model=None,
     ):
         super().__init__()
         self.img_dir = img_dir
         self.mask_dir = mask_dir
+        self.ga_model = ga_model
 
         self.mask_dir_test = mask_dir
         self.img_dir_test = img_dir
@@ -107,12 +128,25 @@ class TrachomaDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
 
     def setup(self, stage=None):
-        # transforms
-        # transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-        # split dataset
-        # if stage in (None, "fit"):
+        # Pre-compute GA crop masks once in the main process so workers never need the model.
+        # ga_mask_cache maps filename -> uint8 mask (H, W) at original resolution.
+        ga_mask_cache = {}
+        if self.ga_model is not None:
+            print("Pre-computing GA crop masks...")
+            for fname in dict.fromkeys(self.train_imgs + self.val_imgs):
+                ga_mask_cache[fname] = _compute_ga_mask(
+                    self.ga_model, os.path.join(self.img_dir, fname)
+                )
+            for fname in dict.fromkeys(self.test_imgs):
+                if fname not in ga_mask_cache:
+                    ga_mask_cache[fname] = _compute_ga_mask(
+                        self.ga_model, os.path.join(self.img_dir_test, fname)
+                    )
+            print(f"GA masks computed for {len(ga_mask_cache)} images.")
+
         self.trachoma_train = TrachomaDataset(
-            self.img_dir, self.mask_dir, self.train_imgs, transform=self.transforms_1, augment_image=True
+            self.img_dir, self.mask_dir, self.train_imgs, transform=self.transforms_1,
+            augment_image=True, ga_mask_cache=ga_mask_cache,
         )
         # Validation uses its own held-out split (not the test set)
         self.trachoma_val = TrachomaDataset(
@@ -120,12 +154,14 @@ class TrachomaDataModule(pl.LightningDataModule):
             self.mask_dir,
             self.val_imgs,
             transform=self.transforms_0,
+            ga_mask_cache=ga_mask_cache,
         )
         self.trachoma_test = TrachomaDataset(
             self.img_dir_test,
             self.mask_dir_test,
             self.test_imgs,
             transform=self.transforms_0,
+            ga_mask_cache=ga_mask_cache,
         )
 
         if self.norm:
@@ -200,12 +236,13 @@ class TrachomaDataModule(pl.LightningDataModule):
 
 
 class TrachomaDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, imgs, transform=None, augment_image=False):
+    def __init__(self, img_dir, mask_dir, imgs, transform=None, augment_image=False, ga_mask_cache=None):
         super().__init__()
         self.img_dir = img_dir
         self.mask_dir = mask_dir
         self.transform = transform
         self.imgs = imgs
+        self.ga_mask_cache = ga_mask_cache or {}
         # Image-only augmentations (color/blur) applied after spatial transforms.
         # Must NOT go in the stacked transform pipeline as that would corrupt the binary mask.
         self._image_aug = transforms.Compose([
@@ -220,8 +257,10 @@ class TrachomaDataset(Dataset):
         if torch.is_tensor(item):
             item = item.tolist()
 
-        img_path = os.path.join(self.img_dir, self.imgs[item])
-        mask_path = os.path.join(self.mask_dir, self.imgs[item])
+        fname = self.imgs[item]
+        img_path = os.path.join(self.img_dir, fname)
+        mask_fname = os.path.splitext(fname)[0] + ".png"
+        mask_path = os.path.join(self.mask_dir, mask_fname)
         image = io.imread(img_path)
         mask = Image.open(mask_path).convert("1")
         mask = np.array(mask).astype(int)
@@ -229,30 +268,41 @@ class TrachomaDataset(Dataset):
         # Apply CLAHE to each channel for consistent contrast enhancement at all splits
         clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         image = np.stack([clahe.apply(image[:, :, c]) for c in range(image.shape[2])], axis=2)
-        # mask = io.imread(mask_path)
-        # assert image == image2
-        # print('here')
 
         if self.transform is not None:
             # Scale mask from {0,1} to {0,255} so the /255 in ToTensor maps it back to {0,1}.
             mask_255 = (mask * 255).astype(np.uint8)
-            temp = np.dstack((image, mask_255))
+
+            # Stack GA crop mask as an extra channel so it undergoes the same spatial
+            # transforms (flips, rotation, crop) as image and follicle mask.
+            ga_mask = self.ga_mask_cache.get(fname)
+            if ga_mask is not None:
+                temp = np.dstack((image, mask_255, ga_mask))  # (H, W, 5)
+            else:
+                temp = np.dstack((image, mask_255))           # (H, W, 4)
 
             if isinstance(self.transform, list):
-                transformed_images = self.transform[0](temp)
-                image = transformed_images[:3, :, :]
-                mask = transformed_images[-1, :, :]
+                transformed = self.transform[0](temp)
+                image = transformed[:3, :, :]
+                mask = transformed[3, :, :]
+                if ga_mask is not None:
+                    ga_mask_t = transformed[4, :, :]           # [0, 1] after ToTensor /255
+                    # Apply GA crop to [0,1] image before normalization
+                    image = image * (ga_mask_t > 0.5).float()
                 image = self.transform[1](image)
             else:
-                transformed_images = self.transform(temp)
-                image = transformed_images[:3, :, :]
-                mask = transformed_images[-1, :, :]
+                transformed = self.transform(temp)
+                image = transformed[:3, :, :]
+                mask = transformed[3, :, :]
+                if ga_mask is not None:
+                    ga_mask_t = transformed[4, :, :]
+                    image = image * (ga_mask_t > 0.5).float()
 
         # Apply image-only augmentations (color jitter, blur) after spatial transforms
         if self._image_aug is not None:
             image = self._image_aug(image)
 
-        sample = {"image": image, "label": mask, "name": self.imgs[item]}
+        sample = {"image": image, "label": mask, "name": fname}
 
         return sample
 
