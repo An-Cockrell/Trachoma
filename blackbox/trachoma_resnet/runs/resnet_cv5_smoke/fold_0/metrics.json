@@ -1,0 +1,16 @@
+{
+  "fold": 0,
+  "seed": 1234,
+  "n_train": 14767,
+  "n_val": 3706,
+  "pos_weight": 9.121315969842358,
+  "img_size": 512,
+  "batch_size": 8,
+  "accumulate_grad_batches": 3,
+  "lr": 0.0001,
+  "weight_decay": 0.0001,
+  "freeze_backbone_epochs": 1,
+  "best_ckpt": "/home/Trachoma/blackbox/trachoma_resnet/runs/resnet_cv5_smoke/fold_0/checkpoints/best-v1.ckpt",
+  "val_threshold_kappa": 0.5499999999999999,
+  "val_threshold_youden": 0.5499999999999999
+}

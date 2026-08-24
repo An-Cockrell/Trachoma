@@ -1,0 +1,9 @@
+{
+  "min_follicle_ratio": 0.0011997890693410352,
+  "description": "min_follicle_area_px = min_follicle_ratio * eyelid_area_px  (both at 512x512)",
+  "dot_physical_diameter_mm": 0.5,
+  "n_images_used": 45,
+  "n_images_total": 109,
+  "ratio_mean": 0.0012159567614577096,
+  "ratio_std": 0.000381920163201127
+}

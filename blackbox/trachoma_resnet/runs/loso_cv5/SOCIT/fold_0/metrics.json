@@ -1,0 +1,15 @@
+{
+  "seed": 7234,
+  "n_train": 9090,
+  "n_val": 2278,
+  "pos_weight": 8.598732840549102,
+  "img_size": 512,
+  "batch_size": 8,
+  "accumulate_grad_batches": 3,
+  "lr": 0.0001,
+  "weight_decay": 0.0001,
+  "freeze_backbone_epochs": 1,
+  "best_ckpt": "/home/Trachoma/blackbox/trachoma_resnet/runs/loso_cv5/SOCIT/fold_0/checkpoints/best.ckpt",
+  "val_threshold_kappa": 0.95,
+  "val_threshold_youden": 0.5499999999999999
+}

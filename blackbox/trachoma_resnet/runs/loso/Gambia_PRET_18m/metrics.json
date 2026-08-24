@@ -1,0 +1,75 @@
+{
+  "metrics": {
+    "n": 50,
+    "n_pos": 17,
+    "prevalence": 0.34,
+    "kappa": 0.9082568807339448,
+    "accuracy": 0.96,
+    "sensitivity": 0.8823529411764706,
+    "specificity": 1.0,
+    "precision": 1.0,
+    "f1": 0.9375,
+    "auroc": 1.0,
+    "auprc": 1.0,
+    "brier": 0.014585271359385643
+  },
+  "ci95": {
+    "kappa": [
+      0.7600748560460654,
+      1.0
+    ],
+    "accuracy": [
+      0.9,
+      1.0
+    ],
+    "sensitivity": [
+      0.7058823529411765,
+      1.0
+    ],
+    "specificity": [
+      1.0,
+      1.0
+    ],
+    "precision": [
+      1.0,
+      1.0
+    ],
+    "f1": [
+      0.8275862068965517,
+      1.0
+    ],
+    "auroc": [
+      1.0,
+      1.0
+    ],
+    "auprc": [
+      1.0,
+      1.0
+    ],
+    "brier": [
+      0.004211551153677644,
+      0.028004374847382676
+    ]
+  },
+  "summary": {
+    "held_out_source": "Gambia PRET 18m",
+    "n_train": 20790,
+    "n_val": 2264,
+    "n_test": 50,
+    "test_prevalence": 0.34,
+    "threshold": 0.7,
+    "kappa": 0.9082568807339448,
+    "kappa_lo": 0.7600748560460654,
+    "kappa_hi": 1.0,
+    "auroc": 1.0,
+    "auroc_lo": 1.0,
+    "auroc_hi": 1.0,
+    "auprc": 1.0,
+    "sensitivity": 0.8823529411764706,
+    "specificity": 1.0,
+    "precision": 1.0,
+    "f1": 0.9375,
+    "brier": 0.014585271359385643,
+    "best_ckpt": "/home/Trachoma/blackbox/trachoma_resnet/runs/loso/Gambia_PRET_18m/checkpoints/best.ckpt"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "run_name": "resnet_masked_eyelid",
+  "pos_weight": 9.243191893603546,
+  "n_train": 16174,
+  "n_val": 2287,
+  "n_test": 4593,
+  "test": [
+    {
+      "test_loss": 1.12810218334198,
+      "test_kappa": 0.7098565101623535,
+      "test_acc": 0.9516655802726746,
+      "test_precision": 0.7868020534515381,
+      "test_recall": 0.6919642686843872,
+      "test_f1": 0.7363420724868774,
+      "test_threshold": 0.8999999761581421
+    }
+  ]
+}

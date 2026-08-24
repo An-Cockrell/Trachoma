@@ -1,0 +1,29 @@
+{
+  "results": [
+    {
+      "held_out_source": "ICAPS",
+      "n_train": 18668,
+      "n_val": 2087,
+      "n_test": 2299,
+      "test_prevalence": 0.02435841670291431,
+      "threshold": 0.5499999999999999,
+      "kappa": 0.020939878772137658,
+      "kappa_lo": -0.006534755096797491,
+      "kappa_hi": 0.04925592977233171,
+      "auroc": 0.529934399082861,
+      "auroc_lo": 0.4454933716239298,
+      "auroc_hi": 0.6138274234827445,
+      "auprc": 0.04865285214669643,
+      "sensitivity": 0.26785714285714285,
+      "specificity": 0.8194382523406153,
+      "precision": 0.03571428571428571,
+      "f1": 0.06302521008403361,
+      "brier": 0.2825298576834659,
+      "best_ckpt": "/home/Trachoma/blackbox/trachoma_resnet/runs/loso_smoke/ICAPS/checkpoints/best.ckpt",
+      "indist_kappa": 0.4229508196721327,
+      "indist_auroc": 0.959830866807611,
+      "delta_kappa_loso_minus_indist": -0.40201094089999506,
+      "delta_auroc_loso_minus_indist": -0.42989646772475
+    }
+  ]
+}

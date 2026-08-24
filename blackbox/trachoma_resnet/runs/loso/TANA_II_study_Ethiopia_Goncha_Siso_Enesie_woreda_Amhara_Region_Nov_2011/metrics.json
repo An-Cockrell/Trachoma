@@ -1,0 +1,79 @@
+{
+  "metrics": {
+    "n": 804,
+    "n_pos": 171,
+    "prevalence": 0.2126865671641791,
+    "kappa": 0.6176464031743908,
+    "accuracy": 0.8407960199004975,
+    "sensitivity": 0.9590643274853801,
+    "specificity": 0.8088467614533965,
+    "precision": 0.5754385964912281,
+    "f1": 0.7192982456140351,
+    "auroc": 0.9587178847592915,
+    "auprc": 0.8791456835526783,
+    "brier": 0.13867070624868644
+  },
+  "ci95": {
+    "kappa": [
+      0.5604930319190925,
+      0.6741817991567207
+    ],
+    "accuracy": [
+      0.8159203980099502,
+      0.8656716417910447
+    ],
+    "sensitivity": [
+      0.9257080745341615,
+      0.9860368389780153
+    ],
+    "specificity": [
+      0.7791793201230431,
+      0.8384012277867529
+    ],
+    "precision": [
+      0.5212691563755394,
+      0.6327294034090909
+    ],
+    "f1": [
+      0.6730298951464218,
+      0.7640082802547771
+    ],
+    "auroc": [
+      0.9443238195401102,
+      0.9712272427372631
+    ],
+    "auprc": [
+      0.8378837407907012,
+      0.9131847699426098
+    ],
+    "brier": [
+      0.11783673539647764,
+      0.16017270062747418
+    ]
+  },
+  "summary": {
+    "held_out_source": "TANA II study,  Ethiopia, Goncha Siso Enesie woreda, Amhara Region, Nov 2011",
+    "n_train": 20048,
+    "n_val": 2202,
+    "n_test": 804,
+    "test_prevalence": 0.2126865671641791,
+    "threshold": 0.49999999999999994,
+    "kappa": 0.6176464031743908,
+    "kappa_lo": 0.5604930319190925,
+    "kappa_hi": 0.6741817991567207,
+    "auroc": 0.9587178847592915,
+    "auroc_lo": 0.9443238195401102,
+    "auroc_hi": 0.9712272427372631,
+    "auprc": 0.8791456835526783,
+    "sensitivity": 0.9590643274853801,
+    "specificity": 0.8088467614533965,
+    "precision": 0.5754385964912281,
+    "f1": 0.7192982456140351,
+    "brier": 0.13867070624868644,
+    "best_ckpt": "/home/Trachoma/blackbox/trachoma_resnet/runs/loso/TANA_II_study_Ethiopia_Goncha_Siso_Enesie_woreda_Amhara_Region_Nov_2011/checkpoints/best.ckpt",
+    "indist_kappa": 0.7435897435897435,
+    "indist_auroc": 0.9452083333333332,
+    "delta_kappa_loso_minus_indist": -0.1259433404153527,
+    "delta_auroc_loso_minus_indist": 0.013509551425958333
+  }
+}

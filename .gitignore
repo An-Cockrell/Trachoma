@@ -31,9 +31,11 @@ resolution test many phones
 Result_Images
 data from Supervisely task
 # Trained model weight directories
-trachoma_resnet/
-trachoma_convnet/
-trachoma_efficientnetv2s/
+# Anchored to repo root: unanchored, these also matched blackbox/trachoma_*/
+# and silently excluded the entire paper codebase.
+/trachoma_resnet/
+/trachoma_convnet/
+/trachoma_efficientnetv2s/
 trachoma_efficientnetv2s.zip
 all_Transforms_oversample5_LeNet5/
 all_Transforms_oversample5_basicCNN/
@@ -339,3 +341,58 @@ cython_debug/
 #.idea/
 
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm
+
+# ---- Peer-review submission (2026-08) ----
+
+# Bulk archives and source data
+/unused_but _afraid_to_delete/
+/data.zip
+/existing_trachoma_ml_papers/
+
+# Non-paper architectures. The manuscript reports the ResNet-50 only; these two
+# were exploratory and their READMEs are stale/incorrect. Excluded as whole
+# directories, so the negations further down cannot re-include anything inside
+# them (git never descends into an excluded directory).
+blackbox/trachoma_convnet/
+blackbox/trachoma_efficientnetv2s/
+
+# Training artifacts: 15.9GB ckpt, 445MB console log, per-fold split indices.
+# Excluded per-file (not as a directory) so the small run metadata below can be
+# re-included -- git will not descend into an excluded directory, so a bare
+# "blackbox/*/runs/" would make the negations underneath it dead rules.
+blackbox/*/runs/**
+!blackbox/*/runs/**/
+!blackbox/*/runs/**/*.json
+!blackbox/*/runs/**/*.yaml
+
+# Follicle annotation working data
+annotated_data/FollicleDetection/cleanup_follicle_annotations/manual_check/
+annotated_data/FollicleDetection/tmp/
+annotated_data/FollicleDetection/sticker_pixel7.zip
+annotated_data/FollicleDetection/chris_regraded_fp_fn.zip
+
+# Exported models (75MB + 26MB). Deliberately not published: not needed for the
+# paper, and adding them would grow the LFS footprint we just cleaned up.
+*.onnx
+
+# Manuscript drafts and other office documents. The repo is public, so no
+# unpublished draft should ever reach the remote. Blanket rule by extension --
+# safer than naming individual drafts, which get renamed and re-copied.
+*.docx
+*.doc
+*.odt
+*.rtf
+
+# Internal manuscript-drafting notes. Superseded by the README + the committed
+# eval_outputs artifacts, which carry every reported number. These contain
+# candid framing/claim-verdict/must-fix notes not intended for readers.
+blackbox/trachoma_resnet/RESULTS_REFERENCE.md
+blackbox/trachoma_resnet/RESULTS_REFERENCE_CV.md
+blackbox/trachoma_resnet/resnet_results_summary.md
+
+# Re-include quantitative paper figures (overrides **/*.png above).
+# Grad-CAM is deliberately NOT re-included: the exemplar JPGs and the composite
+# panels built from them are patient photographs, excluded per data agreement.
+!blackbox/*/eval_outputs/**/*.png
+blackbox/*/eval_outputs/**/gradcam_exemplars_*/
+blackbox/*/eval_outputs/**/fig_gradcam*.png

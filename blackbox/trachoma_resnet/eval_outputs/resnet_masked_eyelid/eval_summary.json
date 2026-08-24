@@ -1,0 +1,20 @@
+{
+  "ckpt": "runs/resnet_masked_eyelid/checkpoints/best.ckpt",
+  "threshold": 0.9,
+  "val_kappa_at_threshold": 0.809289096535295,
+  "test_kappa": 0.7082426433201304,
+  "test_accuracy": 0.9514478554321794,
+  "test_precision": 0.7862595419847328,
+  "test_f1": 0.7348394768133175,
+  "confusion_matrix": [
+    [
+      4061,
+      84
+    ],
+    [
+      139,
+      309
+    ]
+  ],
+  "n_test": 4593
+}

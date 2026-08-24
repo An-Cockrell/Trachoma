@@ -300,3 +300,5 @@ image_path,mask_path
 /home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Images/1003061_187.png,/home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Mask/1003061_187.png
 /home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Images/0624014_304.png,/home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Mask/0624014_304.png
 /home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Images/1003062_191.png,/home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Mask/1003062_191.png
+/home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Images/IMG_0125.png,/home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Mask/IMG_0125.png
+/home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Images/image1096.png,/home/Trachoma/annotated_data/FollicleDetection/SAMFollicleMasks/manual_check/Mask/image1096.png

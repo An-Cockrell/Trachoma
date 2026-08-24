@@ -1,0 +1,5 @@
+freeze_backbone_epochs: 1
+initial_threshold: 0.5
+lr: 0.0003
+pos_weight: 9.243191893603546
+weight_decay: 0.01

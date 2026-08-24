@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import cv2
 import numpy as np
 from PIL import Image
@@ -22,6 +23,7 @@ from sklearn.metrics import (
 plt.ioff()
 
 from skimage.morphology import remove_small_objects
+from scipy.ndimage import distance_transform_edt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../GradableAreaData"))
 from Training_lightning_GradableArea_UNet import GradableAreaUNet
@@ -39,12 +41,21 @@ from Training_lightning_MultipleFollicle_UNet_Pretrained import FollicleUNet
 
 METADATA_CSV = "/home/Trachoma/data/all_metadata.csv"
 GA_PATH = "../GradableAreaData/Checkpoints/GradableArea_MobileNetV2_UNet/last.ckpt"
-FOLLICLE_PATH = "Checkpoints/MultipleFollicle_EfficientNetB4_UNet_Pretrained/last.ckpt"
+FOLLICLE_PATH = "Checkpoints/MultipleFollicle_EfficientNetB4_UNet_Pretrained_v3/last.ckpt"
+# FOLLICLE_PATH = "Checkpoints/MultipleFollicle_EfficientNetB4_UNet_Pretrained_v2/last.ckpt"
 # FOLLICLE_PATH = "Checkpoints/MultipleFollicle_EfficientNetB4_UNet_Scratch/last.ckpt"
 # FOLLICLE_PATH = "Checkpoints/old_script_SAMFollicleMask/last.ckpt"
-OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Pretrained_TF_eval"
+OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Pretrained_v3_TF_eval_sizefilter_tarsalzone_circularity"
+# OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Pretrained_v2_TF_eval_sizefilter_tarsalzone_circularity"
+# OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Pretrained_TF_eval_sizefilter_tarsalzone"
+# OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Pretrained_TF_eval"  # no WHO filters
 # OUT_DIR = "follicle_detection_figs/EfficientNetB4_UNet_Scratch_TF_eval"
 # OUT_DIR = "follicle_detection_figs/old_script_SAMFollicleMask_TF_eval"
+
+# Set to a CSV path (with columns image_name, tf_grade) to override ground-truth
+# labels for matched images; set to None to use all_metadata.csv grades as-is.
+CHRIS_GRADES_CSV = None
+# CHRIS_GRADES_CSV = "chris_tf_grades.csv"
 
 # GA UNet was trained with ImageNet normalization — must match training exactly
 GA_NORM = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -54,7 +65,13 @@ FOLLICLE_NORM = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.2
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-MIN_BLOB_SIZE = 20  # pixels — blobs smaller than this are treated as noise
+MIN_BLOB_SIZE = 20  # pixels — absolute noise floor regardless of eyelid size
+
+_calib_path = os.path.join(os.path.dirname(__file__), "sticker_calibration.json")
+with open(_calib_path) as _f:
+    MIN_FOLLICLE_RATIO = float(json.load(_f)["min_follicle_ratio"])
+# min_follicle_area_px = MIN_FOLLICLE_RATIO * eyelid_area_px  (both at 512×512)
+# Derived from 45 sticker reference images; dots are the 0.5 mm WHO minimum.
 
 GLARE_V_THRESH = 210  # HSV Value floor for glare detection
 GLARE_S_THRESH = 45  # HSV Saturation ceiling (sclera sits ~80–130, safely above this)
@@ -90,19 +107,83 @@ def detect_glare_mask(images_raw):
     return mask
 
 
-def get_follicle_mask(outputs, crop_mask_np):
+TARSAL_LATERAL_FRAC = 0.10  # fraction trimmed from each side before dist-transform
+TARSAL_ERODE_FRAC   = 0.18  # dist-transform threshold as fraction of minor axis
+
+
+def get_tarsal_zone(crop_mask_np):
     """
-    Threshold the follicle UNet sigmoid output at 0.5 (same as MultipleFollicleTest.py),
-    restrict to the eyelid region, and remove noise blobs below MIN_BLOB_SIZE.
+    Derive the WHO upper tarsal conjunctiva grading zone from the GA eyelid mask.
+
+    Steps:
+      1. Trim the outer 10 % on each side (medial/lateral canthal regions).
+      2. Distance-transform erosion at 18 % of the minor axis — removes the
+         ciliary margin (bottom), superior fornix (top), and rounds the corners.
+
+    Returns a boolean mask the same shape as crop_mask_np.
+    """
+    cols = np.where(crop_mask_np.any(axis=0))[0]
+    if len(cols) == 0:
+        return crop_mask_np.copy()
+    cropped = crop_mask_np.astype(np.uint8).copy()
+    w = cols[-1] - cols[0]
+    trim = int(TARSAL_LATERAL_FRAC * w)
+    cropped[:, :cols[0] + trim] = 0
+    cropped[:, cols[-1] - trim:] = 0
+
+    dist = distance_transform_edt(cropped)
+    rows = np.where(cropped.any(axis=1))[0]
+    cols2 = np.where(cropped.any(axis=0))[0]
+    if len(rows) == 0 or len(cols2) == 0:
+        return cropped.astype(bool)
+    minor = min(rows[-1] - rows[0], cols2[-1] - cols2[0])
+    return (dist > TARSAL_ERODE_FRAC * minor)
+
+
+def get_follicle_mask(outputs, crop_mask_np, min_follicle_area, tarsal_zone):
+    """
+    Pipeline (applied in order):
+      1. Threshold UNet output at 0.5, restrict to full eyelid mask.
+      2. Remove blobs below min_follicle_area (WHO 0.5 mm size threshold).
+      3. Drop any blob whose centroid falls outside the WHO tarsal zone —
+         whole blobs are kept or removed, never cut in half.
+
+    The follicle model always sees the full eyelid; size and location filters
+    are post-processing only.
 
     Returns (outMask, num_follicles).
     """
     if crop_mask_np.size == 0:
         return np.zeros_like(outputs, dtype=bool), 0
     outMask = (outputs >= 0.5) & crop_mask_np
-    outMask = remove_small_objects(outMask, min_size=MIN_BLOB_SIZE)
-    _, num_follicles = ndimage.label(outMask)
-    return outMask, num_follicles
+    outMask = remove_small_objects(outMask, max_size=min_follicle_area)
+
+    labeled, num_blobs = ndimage.label(outMask)
+    kept = np.zeros_like(outMask, dtype=bool)
+    for blob_id in range(1, num_blobs + 1):
+        cy, cx = ndimage.center_of_mass(labeled == blob_id)
+        cy, cx = int(round(cy)), int(round(cx))
+        if tarsal_zone[cy, cx]:
+            kept |= (labeled == blob_id)
+
+    # Circularity filter: follicles are round (≥0.35); vessels/artifacts are not
+    labeled_kept, n_kept = ndimage.label(kept)
+    final = np.zeros_like(kept, dtype=bool)
+    for blob_id in range(1, n_kept + 1):
+        blob = (labeled_kept == blob_id).astype(np.uint8)
+        contours, _ = cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        area = cv2.contourArea(contours[0])
+        perimeter = cv2.arcLength(contours[0], True)
+        if perimeter == 0:
+            continue
+        circularity = 4 * np.pi * area / (perimeter ** 2)
+        if circularity >= 0.35:
+            final |= (labeled_kept == blob_id)
+    # num_follicles = int(ndimage.label(kept)[1])  # pre-circularity count
+    num_follicles = int(ndimage.label(final)[1])
+    return final, num_follicles
 
 
 def param_sweep(results, save_path=f"{OUT_DIR}/parameter_sweep.png"):
@@ -218,6 +299,21 @@ dm = TrachomaMetaDataModule(
 )
 
 dm.setup()
+
+if CHRIS_GRADES_CSV:
+    from DataLoader_lightning_MultipleFollicle_all_metadata import TrachomaMetaDataset
+    chris_df = pd.read_csv(CHRIS_GRADES_CSV)
+    chris_lookup = dict(zip(chris_df["image_name"].astype(str), chris_df["tf_grade"]))
+    test_df = dm.test_df.copy()
+    updated = 0
+    for idx, row in test_df.iterrows():
+        stem = os.path.splitext(os.path.basename(row["image_path"]))[0]
+        if stem in chris_lookup:
+            test_df.at[idx, "label"] = chris_lookup[stem]
+            updated += 1
+    print(f"[Chris grades] Overriding {updated}/{len(test_df)} test labels from {CHRIS_GRADES_CSV}")
+    dm.trachoma_test = TrachomaMetaDataset(test_df, transform=trans_eval)
+
 test_data = dm.test_dataloader()
 print(f"Test batches: {len(test_data)}")
 
@@ -261,9 +357,14 @@ with torch.no_grad():
         outputs = torch.sigmoid(model(images_follicle)).squeeze().detach().cpu().numpy()  # FollicleUNet
         # outputs = torch.sigmoid(model(images_follicle)["out"]).squeeze().detach().cpu().numpy()  # TrachomaGradableArea
         crop_mask_np = crop_mask.squeeze().cpu().numpy().astype(bool)
-        outputs[detect_glare_mask(images_raw)] = 0
+        glare_mask = detect_glare_mask(images_raw)
+        print(f"{os.path.basename(img_path)}: glare pixels = {glare_mask.sum()}")
+        outputs[glare_mask] *= 0.25
 
-        outMask, num_follicles = get_follicle_mask(outputs, crop_mask_np)
+        eyelid_area = int(crop_mask_np.sum())
+        min_follicle_area = max(MIN_BLOB_SIZE, int(MIN_FOLLICLE_RATIO * eyelid_area))
+        tarsal_zone = get_tarsal_zone(crop_mask_np)
+        outMask, num_follicles = get_follicle_mask(outputs, crop_mask_np, min_follicle_area, tarsal_zone)
 
         results.append((img_path, true_label, num_follicles, outMask))
 
@@ -327,8 +428,13 @@ with torch.no_grad():
         outputs = torch.sigmoid(model(images_follicle)).squeeze().detach().cpu().numpy()  # FollicleUNet
         # outputs = torch.sigmoid(model(images_follicle)["out"]).squeeze().detach().cpu().numpy()  # TrachomaGradableArea
         crop_mask_np = crop_mask.squeeze().cpu().numpy().astype(bool)
-        outputs[detect_glare_mask(images_raw)] = 0
-        outMask, num_follicles = get_follicle_mask(outputs, crop_mask_np)
+        glare_mask = detect_glare_mask(images_raw)
+        print(f"{os.path.basename(img_path)}: glare pixels = {glare_mask.sum()}")
+        outputs[glare_mask] *= 0.25
+        eyelid_area = int(crop_mask_np.sum())
+        min_follicle_area = max(MIN_BLOB_SIZE, int(MIN_FOLLICLE_RATIO * eyelid_area))
+        tarsal_zone = get_tarsal_zone(crop_mask_np)
+        outMask, num_follicles = get_follicle_mask(outputs, crop_mask_np, min_follicle_area, tarsal_zone)
         outputs_masked = outputs * crop_mask_np
 
         im = images_raw.squeeze().permute(1, 2, 0).cpu().numpy()

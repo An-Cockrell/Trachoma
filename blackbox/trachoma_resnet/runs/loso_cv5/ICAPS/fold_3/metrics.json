@@ -1,0 +1,15 @@
+{
+  "seed": 5237,
+  "n_train": 16642,
+  "n_val": 4163,
+  "pos_weight": 8.40225988700565,
+  "img_size": 512,
+  "batch_size": 8,
+  "accumulate_grad_batches": 3,
+  "lr": 0.0001,
+  "weight_decay": 0.0001,
+  "freeze_backbone_epochs": 1,
+  "best_ckpt": "/home/Trachoma/blackbox/trachoma_resnet/runs/loso_cv5/ICAPS/fold_3/checkpoints/best.ckpt",
+  "val_threshold_kappa": 0.95,
+  "val_threshold_youden": 0.15
+}

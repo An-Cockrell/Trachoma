@@ -1,0 +1,52 @@
+{
+  "csv": "/home/Trachoma/data/all_metadata.csv",
+  "n_total": 23104,
+  "n_pool": 18473,
+  "n_test": 4631,
+  "test_prevalence": 0.09825091772835241,
+  "pool_prevalence": 0.09808910301521138,
+  "n_folds": 5,
+  "test_frac": 0.2,
+  "seed": 1234,
+  "group_cols": [
+    "source",
+    "id"
+  ],
+  "folds": [
+    {
+      "fold": 0,
+      "n_train": 14767,
+      "n_val": 3706,
+      "train_prevalence": 0.09880138145865781,
+      "val_prevalence": 0.09525094441446304
+    },
+    {
+      "fold": 1,
+      "n_train": 14785,
+      "n_val": 3688,
+      "train_prevalence": 0.09807237064592493,
+      "val_prevalence": 0.09815618221258135
+    },
+    {
+      "fold": 2,
+      "n_train": 14797,
+      "n_val": 3676,
+      "train_prevalence": 0.09751976752044333,
+      "val_prevalence": 0.10038084874863983
+    },
+    {
+      "fold": 3,
+      "n_train": 14765,
+      "n_val": 3708,
+      "train_prevalence": 0.09820521503555706,
+      "val_prevalence": 0.09762675296655879
+    },
+    {
+      "fold": 4,
+      "n_train": 14778,
+      "n_val": 3695,
+      "train_prevalence": 0.0978481526593585,
+      "val_prevalence": 0.09905277401894452
+    }
+  ]
+}

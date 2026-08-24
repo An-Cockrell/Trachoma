@@ -1,4 +1,5 @@
 import gc
+import json
 import os
 import random
 import numpy as np
@@ -16,9 +17,19 @@ from torchmetrics.classification import (
     BinaryPrecision, BinaryRecall, BinaryF1Score, BinaryJaccardIndex,
 )
 import segmentation_models_pytorch as smp
+from scipy import ndimage
 from skimage import io
+from skimage.morphology import remove_small_objects
 from PIL import Image
 
+
+MIN_BLOB_SIZE = 20  # pixels — blobs smaller than this are treated as noise
+
+_calib_path = os.path.join(os.path.dirname(__file__), "sticker_calibration.json")
+with open(_calib_path) as _f:
+    MIN_FOLLICLE_RATIO = float(json.load(_f)["min_follicle_ratio"])
+# min_follicle_area_px = MIN_FOLLICLE_RATIO * eyelid_area_px  (both at 512×512)
+# Matches the post-processing filter in MultipleFollicleTest_TF_prediction.py exactly.
 
 SEED = 1234
 random.seed(SEED)
@@ -42,11 +53,12 @@ class ToTensor:
 
 
 class TrachomaDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, imgs, transform=None):
+    def __init__(self, img_dir, mask_dir, imgs, transform=None, image_aug=None):
         self.img_dir = img_dir
         self.mask_dir = mask_dir
         self.imgs = imgs
         self.transform = transform
+        self.image_aug = image_aug
 
     def __len__(self):
         return len(self.imgs)
@@ -64,24 +76,35 @@ class TrachomaDataset(Dataset):
         if isinstance(self.transform, list):
             # transform[0]: geometric transforms applied to stacked (image+mask)
             # transform[1]: normalization applied to image channels only
-            stacked = self.transform[0](stacked)  # → (4, H, W) tensor
-            image = self.transform[1](stacked[:3])
+            stacked = self.transform[0](stacked)  # → (4, H, W) tensor, [0,1] unnormalized
+            eyelid_area = int((stacked[:3].sum(0) > 0).sum().item())
+            img_channels = self.image_aug(stacked[:3]) if self.image_aug is not None else stacked[:3]
+            image = self.transform[1](img_channels)  # normalize after augmentation
             mask  = stacked[3]
         elif self.transform is not None:
             stacked = self.transform(stacked)
-            image = stacked[:3]
+            eyelid_area = int((stacked[:3].sum(0) > 0).sum().item())
+            img_channels = self.image_aug(stacked[:3]) if self.image_aug is not None else stacked[:3]
+            image = img_channels
             mask  = stacked[3]
         else:
             image = torch.from_numpy(image.transpose(2, 0, 1) / 255).float()
             mask  = torch.from_numpy(mask).float()
+            eyelid_area = int((image.sum(0) > 0).sum().item())
+            if self.image_aug is not None:
+                image = self.image_aug(image)
 
-        mask = (mask > 0).to(torch.int)
+        # Filter ground-truth mask blobs below the WHO 0.5 mm threshold.
+        # Uses the same ratio and resolution (512×512) as inference-time filtering.
+        min_area = max(MIN_BLOB_SIZE, int(MIN_FOLLICLE_RATIO * eyelid_area))
+        mask_np = remove_small_objects((mask.numpy() > 0), max_size=min_area)
+        mask = torch.from_numpy(mask_np).to(torch.int)
         return {"image": image, "label": mask, "name": name}
 
 
 class TrachomaDataModule(pl.LightningDataModule):
     def __init__(self, img_dir, mask_dir, trans_train, trans_eval,
-                 batch_size=6, num_workers=4):
+                 batch_size=6, num_workers=4, image_aug=None):
         super().__init__()
         self.img_dir = img_dir
         self.mask_dir = mask_dir
@@ -89,6 +112,7 @@ class TrachomaDataModule(pl.LightningDataModule):
         self.trans_eval = trans_eval
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.image_aug = image_aug
 
         all_imgs = sorted([
             f for f in os.listdir(img_dir)
@@ -113,7 +137,8 @@ class TrachomaDataModule(pl.LightningDataModule):
 
     def setup(self, stage=None):
         self.ds_train = TrachomaDataset(
-            self.img_dir, self.mask_dir, self.train_imgs, transform=self.trans_train
+            self.img_dir, self.mask_dir, self.train_imgs,
+            transform=self.trans_train, image_aug=self.image_aug,
         )
         self.ds_val = TrachomaDataset(
             self.img_dir, self.mask_dir, self.val_imgs, transform=self.trans_eval
@@ -135,6 +160,13 @@ class TrachomaDataModule(pl.LightningDataModule):
     def train_dataloader(self): return self._loader(self.ds_train, shuffle=True)
     def val_dataloader(self):   return self._loader(self.ds_val,   shuffle=False)
     def test_dataloader(self):  return self._loader(self.ds_test,  shuffle=False)
+
+
+def count_follicles(binary_mask):
+    """Count connected follicle blobs, ignoring noise below MIN_BLOB_SIZE."""
+    clean = remove_small_objects(binary_mask.astype(bool), max_size=MIN_BLOB_SIZE)
+    _, n = ndimage.label(clean)
+    return n
 
 
 # ── Loss ───────────────────────────────────────────────────────────────────────
@@ -327,6 +359,16 @@ if __name__ == "__main__":
         norm,
     ]
 
+    # Image-only augmentations applied before normalization (ColorJitter needs [0,1] input).
+    # Kept moderate so the distribution shift post-normalization is small (~1σ vs the
+    # 3σ shift the original gamma lambda caused). Targets domain gap from CC_EA2017 and
+    # allTZphotos (warmer tones, older cameras, finger eversion). Never applied to val/test.
+    image_aug = transforms.Compose([
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.15, hue=0.05),
+        transforms.RandomGrayscale(p=0.05),
+        transforms.RandomApply([transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0))], p=0.4),
+    ])
+
     num_workers = min(max(os.cpu_count() - 2, 1), 8)
 
     dm = TrachomaDataModule(
@@ -336,7 +378,8 @@ if __name__ == "__main__":
         trans_eval=trans_eval,
         batch_size=6,
         num_workers=num_workers,
+        image_aug=image_aug,
     )
 
     model = FollicleUNet(encoder="efficientnet-b4", lr=1e-3)
-    run_experiment("MultipleFollicle_EfficientNetB4_UNet_Pretrained", dm, model)
+    run_experiment("MultipleFollicle_EfficientNetB4_UNet_Pretrained_v3", dm, model)

@@ -1,0 +1,197 @@
+{
+  "best": {
+    "val_kappa": 0.8065428137779236,
+    "params": {
+      "lr": 0.0001,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 1
+    }
+  },
+  "fixed_params": {},
+  "grid": {
+    "lr": [
+      0.0001,
+      0.0003,
+      0.0006
+    ],
+    "weight_decay": [
+      0.0001,
+      0.001,
+      0.01
+    ],
+    "freeze_backbone_epochs": [
+      0,
+      1,
+      2
+    ]
+  },
+  "tune_epochs": 5,
+  "group_cols": [
+    "source",
+    "id"
+  ],
+  "results": [
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.789247453212738
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.8065428137779236
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.8038635849952698
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.7765083909034729
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.785649836063385
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.793362021446228
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.799019992351532
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.7975488901138306
+    },
+    {
+      "lr": 0.0001,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.789544939994812
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.769195020198822
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.7618052363395691
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.7677188515663147
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.7866929769515991
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.757745623588562
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.7662674188613892
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.7686591744422913
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.7752678990364075
+    },
+    {
+      "lr": 0.0003,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.7609159350395203
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.7412087917327881
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.7451218962669373
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.0001,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.7392916679382324
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.7535717487335205
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.7415220737457275
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.001,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.7159305214881897
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 0,
+      "val_kappa": 0.7268579006195068
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 1,
+      "val_kappa": 0.7630189657211304
+    },
+    {
+      "lr": 0.0006,
+      "weight_decay": 0.01,
+      "freeze_backbone_epochs": 2,
+      "val_kappa": 0.7379330992698669
+    }
+  ]
+}

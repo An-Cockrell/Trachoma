@@ -1,0 +1,4 @@
+Avg missed follicles per image: 1.727
+Avg extra follicles per image:  1.953
+Weighted missed follicles: 0.128  (259/2022)
+Weighted extra follicles:  0.145  (293/2022)

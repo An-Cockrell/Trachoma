@@ -1,0 +1,32 @@
+# Exact environment used to produce the reported results.
+# Python 3.12.13, Linux, CUDA 12.6.
+#
+# torch/torchvision are pinned to their CPU-agnostic version strings. The
+# results were produced with the CUDA 12.6 builds (torch 2.7.1+cu126); to
+# reproduce on GPU, install those two first from the PyTorch index:
+#
+#   pip install torch==2.7.1 torchvision==0.22.1 \
+#       --index-url https://download.pytorch.org/whl/cu126
+#   pip install -r requirements.txt
+
+torch==2.7.1
+torchvision==0.22.1
+pytorch-lightning==2.5.2
+torchmetrics==1.7.4
+
+numpy==1.26.4
+pandas==2.3.1
+scikit-learn==1.7.1
+scipy==1.15.3
+pillow==11.3.0
+matplotlib==3.10.3
+tqdm==4.67.1
+
+# Grad-CAM figure generation (generate_gradcam_fig.py). The exemplar images
+# themselves are not redistributable under the data agreement; the script is
+# included so the method can be inspected and rerun on your own data.
+grad-cam==1.5.5
+
+# Optional: generate_figs.py uses adjustText for non-overlapping scatter
+# labels and falls back to unadjusted labels if it is absent.
+adjustText==1.4.0

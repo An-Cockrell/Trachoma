@@ -18,19 +18,48 @@ import sys
 import os
 import io
 import csv
+import itertools
 
 import cv2 as cv
 import numpy as np
 from PIL import Image
 from flask import Flask, jsonify, request, send_file
 
-SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-KEEP_CSV    = "keep.csv"
-DISCARD_CSV = "discard.csv"
-CSV_HEADER  = ["image_path", "mask_path"]
+SCRIPT_DIR        = os.path.dirname(os.path.abspath(__file__))
+KEEP_CSV          = "keep.csv"
+DISCARD_CSV       = "discard.csv"
+CSV_HEADER        = ["image_path", "mask_path"]
+MIN_FOLLICLE_RATIO = 0.0012  # min_follicle_area_px = ratio * eyelid_area_px at 512x512
+
+MAX_DISPLAY_LONG_EDGE = 3000  # pixels; images larger than this are downscaled for display only
 
 app   = Flask(__name__)
 STATE = {}
+
+
+def compute_ref_radius(img_path, display_size):
+    """Radius in display pixels of the minimum detectable follicle.
+
+    Counts non-black pixels in the 512x512 image as the eyelid area, applies
+    MIN_FOLLICLE_RATIO to get the minimum follicle area at that scale, then
+    scales the resulting radius to display coordinates.
+    """
+    with Image.open(img_path) as im:
+        arr = np.asarray(im.convert("RGB").resize((512, 512), Image.LANCZOS))
+    eyelid_area = int(np.any(arr > 10, axis=2).sum())
+    ref_r_512   = np.sqrt(MIN_FOLLICLE_RATIO * eyelid_area / np.pi)
+    dW, dH      = display_size
+    scale       = np.sqrt((dW / 512) * (dH / 512))
+    return float(ref_r_512 * scale)
+
+
+def compute_display_size(W, H):
+    """Return (display_W, display_H) capped at MAX_DISPLAY_LONG_EDGE on the long edge."""
+    long_edge = max(W, H)
+    if long_edge <= MAX_DISPLAY_LONG_EDGE:
+        return W, H
+    scale = MAX_DISPLAY_LONG_EDGE / long_edge
+    return round(W * scale), round(H * scale)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -74,10 +103,22 @@ def load_pairs(parent_dir):
     return pairs
 
 
-def load_mask_from_file(mask_path):
-    """Load mask PNG as uint8 {0,1} numpy array."""
+def load_mask_from_file(mask_path, display_size=None):
+    """Load mask PNG as uint8 {0,1} numpy array.
+
+    If display_size (W, H) is given and differs from the mask's size, the mask
+    is downscaled to display_size using nearest-neighbour so edits stay in
+    display-pixel space.  The original file is not modified.
+    """
     mask_np = np.asarray(Image.open(mask_path).convert("L"), dtype=np.uint8)
-    return (mask_np > 127).astype(np.uint8)
+    mask_bin = (mask_np > 127).astype(np.uint8)
+    if display_size is not None:
+        dW, dH = display_size
+        if (mask_bin.shape[1], mask_bin.shape[0]) != (dW, dH):
+            mask_pil = Image.fromarray((mask_bin * 255).astype(np.uint8))
+            mask_pil = mask_pil.resize((dW, dH), Image.NEAREST)
+            mask_bin = (np.asarray(mask_pil) > 127).astype(np.uint8)
+    return mask_bin
 
 
 def mask_to_rgba_png_bytes(mask_u8):
@@ -94,8 +135,14 @@ def mask_to_rgba_png_bytes(mask_u8):
 def load_current(s):
     """Load mask for the current queue index into STATE."""
     img_path, mask_path = s["queue"][s["idx"]]
-    s["current_mask"]      = load_mask_from_file(mask_path)
+    with Image.open(img_path) as im:
+        orig_W, orig_H = im.size
+    dW, dH = compute_display_size(orig_W, orig_H)
+    s["orig_size"]         = (orig_W, orig_H)
+    s["display_size"]      = (dW, dH)
+    s["current_mask"]      = load_mask_from_file(mask_path, display_size=(dW, dH))
     s["current_mask_path"] = mask_path
+    s["ref_radius"]        = compute_ref_radius(img_path, (dW, dH))
 
 
 # ── HTML ───────────────────────────────────────────────────────────────────────
@@ -161,6 +208,7 @@ let editMode       = 'delete';
 let dragStart      = null;   // add-mode: {x,y} in image coords
 let deleteBoxAnchor = null;  // delete-mode drag: {clientX, clientY, imgPos}
 let pending        = false;
+let refRadius      = 0;
 const DRAG_THRESHOLD = 5;    // display pixels before a click becomes a box-drag
 
 // ── Utilities ──────────────────────────────────────────────────────────────
@@ -208,6 +256,19 @@ function redraw(circlePreview, boxPreview) {
     ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
     ctx.setLineDash([]);
   }
+  if (refRadius > 0) {
+    const pad = 10;
+    const cx  = canvas.width  - refRadius - pad;
+    const cy  = canvas.height - refRadius - pad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, refRadius, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fill();
+    ctx.font         = '11px sans-serif';
+    ctx.fillStyle    = 'rgba(255, 255, 255, 0.85)';
+    ctx.textAlign    = 'center';
+    ctx.fillText('min follicle', cx, cy - refRadius - 4);
+  }
 }
 
 function updateModeUI() {
@@ -250,6 +311,7 @@ async function load() {
   document.getElementById('info').textContent  =
     d.reviewed + ' / ' + d.total + ' reviewed  |  ' + d.remaining + ' remaining';
   document.getElementById('fname').textContent = d.filename;
+  refRadius = d.ref_radius || 0;
 
   const [img, msk] = await Promise.all([
     loadImg('/file?p=' + encodeURIComponent(d.image_path)),
@@ -410,6 +472,7 @@ def current():
         "reviewed":   s["seen_count"] + idx,
         "remaining":  len(queue) - idx,
         "total":      s["total"],
+        "ref_radius": s.get("ref_radius", 0),
     })
 
 
@@ -418,6 +481,14 @@ def serve_file():
     path = request.args.get("p", "")
     if not os.path.isfile(path):
         return "not found", 404
+    img = Image.open(path).convert("RGB")
+    dW, dH = compute_display_size(*img.size)
+    if (dW, dH) != img.size:
+        img = img.resize((dW, dH), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=92)
+        buf.seek(0)
+        return send_file(buf, mimetype="image/jpeg")
     return send_file(path)
 
 
@@ -483,7 +554,11 @@ def decide():
     if action == "keep":
         mask = s.get("current_mask")
         if mask is not None:
-            Image.fromarray((mask * 255).astype(np.uint8), mode="L").save(orig_mask_path)
+            orig_W, orig_H = s.get("orig_size", (mask.shape[1], mask.shape[0]))
+            mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
+            if mask_pil.size != (orig_W, orig_H):
+                mask_pil = mask_pil.resize((orig_W, orig_H), Image.NEAREST)
+            mask_pil.save(orig_mask_path)
         append_row(s["parent_dir"], KEEP_CSV, img_path, orig_mask_path)
     else:
         append_row(s["parent_dir"], DISCARD_CSV, img_path, orig_mask_path)
@@ -497,6 +572,56 @@ def decide():
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+METADATA_CSV = "/home/Trachoma/data/all_metadata.csv"
+EXCLUDE_SOURCES = {"SOCIT", "SOCIT_R"}
+
+
+def build_source_map():
+    """Return stem → source dict from all_metadata.csv."""
+    stem_to_source = {}
+    with open(METADATA_CSV, newline="") as f:
+        for row in csv.DictReader(f):
+            stem = os.path.splitext(os.path.basename(row["image_path"]))[0]
+            stem_to_source[stem] = row["source"]
+    return stem_to_source
+
+
+def interleave_by_source(queue, exclude_sources=EXCLUDE_SOURCES):
+    """
+    Group pairs by dataset source and interleave round-robin so every
+    review session sees a uniform mix across datasets.  Any excluded
+    sources (SOCIT) are placed at the end if they exist at all.
+    """
+    stem_to_source = build_source_map()
+
+    buckets = {}   # source → [pairs]
+    excluded = []
+    for pair in queue:
+        stem = os.path.splitext(os.path.basename(pair[0]))[0]
+        src  = stem_to_source.get(stem, "UNKNOWN")
+        if src in exclude_sources:
+            excluded.append(pair)
+        else:
+            buckets.setdefault(src, []).append(pair)
+
+    # Sort bucket keys for determinism; print summary
+    sorted_sources = sorted(buckets.keys())
+    for src in sorted_sources:
+        print(f"  {src}: {len(buckets[src])}")
+    if excluded:
+        print(f"  (excluded/SOCIT appended at end): {len(excluded)}")
+
+    # Round-robin interleave
+    interleaved = [
+        pair
+        for pair in itertools.chain.from_iterable(
+            itertools.zip_longest(*[buckets[s] for s in sorted_sources])
+        )
+        if pair is not None
+    ]
+    return interleaved + excluded
+
+
 def main():
     parent_dir = (
         sys.argv[1] if len(sys.argv) > 1
@@ -509,6 +634,7 @@ def main():
     pairs = load_pairs(parent_dir)
     seen  = load_seen(parent_dir)
     queue = [p for p in pairs if p[0] not in seen]
+    queue = interleave_by_source(queue)
 
     STATE.update({
         "parent_dir":        parent_dir,

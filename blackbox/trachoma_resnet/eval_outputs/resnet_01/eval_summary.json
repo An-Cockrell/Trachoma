@@ -1,0 +1,20 @@
+{
+  "ckpt": "runs/resnet_01/checkpoints/best.ckpt",
+  "threshold": 0.75,
+  "val_kappa_at_threshold": 0.7981428590827,
+  "test_kappa": 0.7185039317624049,
+  "test_accuracy": 0.9549314173742652,
+  "test_precision": 0.8375350140056023,
+  "test_f1": 0.7428571428571429,
+  "confusion_matrix": [
+    [
+      4087,
+      58
+    ],
+    [
+      149,
+      299
+    ]
+  ],
+  "n_test": 4593
+}
